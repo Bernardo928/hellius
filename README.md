@@ -83,7 +83,7 @@ docs/ENGINE.md      contrato do engine
 - **Layout das colunas** (larguras, recolhidas) é salvo em `localStorage`.
 - **Renomear função** é só em memória, nesta sessão.
 - **Ctrl+C e "Copiar"** copiam sempre o escopo completo, por pedido da especificação. Isso significa que copiar com um trecho selecionado também copia a função inteira.
-- **Desempenho**: se o FPS medido nos 2 primeiros segundos ficar abaixo de 50, `data-perf="low"` desliga o blur dos contêineres não essenciais.
+- **Desempenho**:. se o FPS medido nos 2 primeiros segundos ficar abaixo de 50, `data-perf="low"` desliga o blur dos contêineres não essenciais.
 
 ## Limitações conhecidas
 
