@@ -102,7 +102,7 @@ docs/ENGINE.md      contrato do engine
 ## Verificação feita nesta fase
 
 - `typecheck`, `lint`, `vitest` (29 testes) e `cargo test --workspace` (29 testes: núcleo e TUI) passam.
-- `npx tauri build --debug --no-bundle` compila o app.
+- `npx tauri build --debug --no-bundle` compila o app..
 - O app abriu no Xvfb (WebKitGTK), mostrou o portal, abriu `/bin/ls` copiado (via seletor de arquivo nativo), mostrou metadados reais (ELF, x86_64, 64 bits, SHA-256), funções de demonstração e o aviso de demonstração.
 - "Selecionar tudo" + Ctrl+C na função de 20.000 linhas copiou 20.000 linhas completas para a área de transferência.
 - Depois do redesenho: portal, painel, popover de ajustes e tema claro conferidos no app; cópia da função de 20.000 linhas devolveu 20.000 linhas.
