@@ -1,0 +1,12 @@
+[package]
+name = "hellius-core"
+version = "0.1.0"
+description = "Núcleo do Hellius: validação, metadados de binários e contrato do engine"
+edition = "2021"
+rust-version = "1.77"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+sha2 = "0.10"
+goblin = "0.10"

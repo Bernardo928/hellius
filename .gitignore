@@ -3,6 +3,7 @@ dist/
 .cache/
 coverage/
 src-tauri/target/
+/target/
 src-tauri/gen/
 *.log
 .DS_Store

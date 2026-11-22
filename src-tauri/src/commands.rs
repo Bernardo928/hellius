@@ -1,17 +1,16 @@
 //! Comandos Tauri tipados. O front nunca recebe o binário inteiro: só metadados,
 //! listas e fatias de código.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use hellius_core::render::{render_function, render_program};
+use hellius_core::{
+    format_address, parse_address, summarize, AppError, CodeKind, CodeSlice, Engine, FileSummary,
+    FunctionInfo, ImportInfo, MockEngine, StringInfo,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
-
-use crate::analyze::{self, FileSummary};
-use crate::engine::{
-    format_address, mock::MockEngine, parse_address, CodeKind, CodeLine, CodeSlice, Engine,
-    FunctionInfo, ImportInfo, StringInfo,
-};
-use crate::error::AppError;
 
 /// Máximo de linhas devolvidas numa só fatia.
 const MAX_SLICE: usize = 2_000;
@@ -23,6 +22,8 @@ pub struct Session {
 
 pub struct AppState {
     pub session: Mutex<Option<Session>>,
+    /// Impede duas análises ao mesmo tempo sobrescrevendo a sessão uma da outra.
+    pub opening: AtomicBool,
 }
 
 #[derive(Serialize, Clone)]
@@ -48,24 +49,33 @@ fn with_session<T>(
     f(session).map_err(|e| e.to_string())
 }
 
+/// Libera a trava de abertura mesmo em caso de erro.
+struct OpeningGuard<'a>(&'a AtomicBool);
+impl Drop for OpeningGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[tauri::command]
 pub async fn open_file(
     path: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<FileSummary, String> {
+    if state.opening.swap(true, Ordering::SeqCst) {
+        return Err("Já existe uma análise em andamento. Aguarde terminar.".into());
+    }
+    let _guard = OpeningGuard(&state.opening);
+
     let emitter = app.clone();
     let (summary, engine) = tauri::async_runtime::spawn_blocking(move || {
-        let summary = analyze::summarize(&path, &mut |phase, step, total| {
+        let summary = summarize(&path, &mut |phase, step, total| {
             let _ = emitter.emit(
                 "analysis:progress",
                 Progress { phase: phase.to_string(), step, total },
             );
         })?;
-        let _ = emitter.emit(
-            "analysis:progress",
-            Progress { phase: "Carregando engine".into(), step: 4, total: 4 },
-        );
         let engine: Box<dyn Engine> = Box::new(MockEngine::new());
         Ok::<_, AppError>((summary, engine))
     })
@@ -132,18 +142,9 @@ pub fn get_full_text(
                         .as_deref()
                         .ok_or_else(|| AppError::BadArgument("endereço da função ausente".into()))?,
                 )?;
-                Ok(render_all(s.engine.lines(addr, k)?, k))
+                render_function(s.engine.as_ref(), addr, k)
             }
-            "program" => {
-                let mut out = String::new();
-                for addr in s.engine.function_addresses() {
-                    let name = s.engine.function_name(addr).unwrap_or_default();
-                    out.push_str(&format!("; ---- {name} @ {} ----\n", format_address(addr)));
-                    out.push_str(&render_all(s.engine.lines(addr, k)?, k));
-                    out.push_str("\n\n");
-                }
-                Ok(out)
-            }
+            "program" => render_program(s.engine.as_ref(), k),
             other => Err(AppError::BadArgument(other.to_string())),
         }
     })
@@ -157,23 +158,4 @@ pub fn list_strings(state: State<'_, AppState>) -> Result<Vec<StringInfo>, Strin
 #[tauri::command]
 pub fn list_imports(state: State<'_, AppState>) -> Result<Vec<ImportInfo>, String> {
     with_session(&state, |s| Ok(s.engine.list_imports()))
-}
-
-fn render_all(lines: &[CodeLine], kind: CodeKind) -> String {
-    lines.iter().map(|l| render_line(l, kind)).collect::<Vec<_>>().join("\n")
-}
-
-/// Uma linha como aparece na tela, para cópia.
-pub fn render_line(l: &CodeLine, kind: CodeKind) -> String {
-    match kind {
-        CodeKind::Pseudo => l.text.clone(),
-        CodeKind::Hex => format!("{}  {:<47}  {}", l.address, l.bytes.as_deref().unwrap_or(""), l.text),
-        CodeKind::Disasm => {
-            let base = format!("{}  {:<14}  {}", l.address, l.bytes.as_deref().unwrap_or(""), l.text);
-            match &l.comment {
-                Some(c) => format!("{base}  ; {c}"),
-                None => base,
-            }
-        }
-    }
 }
