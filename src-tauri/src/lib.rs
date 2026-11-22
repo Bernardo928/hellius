@@ -14,6 +14,7 @@ pub fn run() {
         .manage(AppState {
             session: Mutex::new(None),
             opening: AtomicBool::new(false),
+            ai_cancel: std::sync::Arc::new(AtomicBool::new(false)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_file,
@@ -23,6 +24,11 @@ pub fn run() {
             commands::list_strings,
             commands::list_imports,
             commands::engine_info,
+            commands::get_totals,
+            commands::ai_status,
+            commands::ai_save_settings,
+            commands::ai_explain,
+            commands::ai_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Hellius");

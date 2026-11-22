@@ -70,13 +70,36 @@ Erros voltam como string em português.
 - O conteúdo é lido em memória apenas para o hash SHA-256 e para os cabeçalhos (`goblin`).
   Nada é executado, carregado como biblioteca ou aberto pelo sistema.
 
+## `NativeEngine` (padrão)
+
+`crates/hellius-core/src/engine/native.rs`. Lê o arquivo uma vez (`open_native`) e:
+
+1. Mapeia endereços virtuais para o arquivo (segmentos `PT_LOAD` do ELF, seções do PE, segmentos do Mach-O).
+2. Coleta sementes: ponto de entrada, símbolos de função, exports.
+3. Faz descida recursiva por função com capstone: segue saltos condicionais e incondicionais, registra chamadas
+   e referências a código (`lea`/`mov` de endereços executáveis) como novas sementes.
+4. Em x86, preenche lacunas entre funções (código só alcançado por ponteiro), pulando o preenchimento.
+5. Reconhece stubs de import (`jmp [slot]` em PLT/IAT) e os trata como nomes, não funções.
+6. Monta xrefs a partir das chamadas. Disassembly, pseudocódigo e hex de cada função são gerados sob demanda
+   e guardados (`OnceLock`).
+
+`get_totals(kind)` devolve o total de linhas de todas as funções numa chamada (escopo "programa inteiro").
+`engine_info` informa `partial` (parou num limite) e `hasCode` (há disassembler para a arquitetura).
+
+## Explicar com IA
+
+`crates/hellius-core/src/ai.rs`. Comandos Tauri: `ai_status`, `ai_save_settings`, `ai_explain(functionAddress,
+requestId)` (texto em eventos `ai:delta`, retorno com o texto completo) e `ai_cancel`. A chave nunca volta
+para o front. Pedido: `POST /v1/messages` com `stream: true`, `model: claude-opus-5-5`,
+`output_config.effort: medium`, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`).
+
 ## `MockEngine`
 
 - Funções fixas de exemplo (`entry`, `main`, `parse_config`, etc.) com assembly x86-64 e pseudocódigo.
   Os bytes são ilustrativos, não correspondem ao arquivo real.
 - Uma função sintética, `funcao_sintetica_20k`, com 20.000 linhas em cada tipo (teste de desempenho).
 - Xrefs são calculados a partir das chamadas entre as funções de exemplo.
-- Os metadados de `FileSummary` **são reais** (lidos do arquivo); funções, código, strings e imports **são inventados**.
+- Usado só em testes. Os metadados de `FileSummary` são reais; funções e código do mock são inventados.
 
 ## Como adicionar um engine real
 

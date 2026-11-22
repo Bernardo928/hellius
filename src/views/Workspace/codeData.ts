@@ -26,6 +26,12 @@ export function cacheGeneration(): number {
   return generation;
 }
 
+/** Totais de todas as funções numa só chamada (escopo "programa inteiro"). */
+async function allTotals(kind: CodeKind): Promise<void> {
+  const list = await api.getTotals(kind);
+  for (const t of list) totalsCache.set(`${kind}|${t.address}`, t.totalLines);
+}
+
 async function totalOf(fn: string, kind: CodeKind): Promise<number> {
   const key = `${kind}|${fn}`;
   const hit = totalsCache.get(key);
@@ -58,6 +64,9 @@ export function useLayout(
     let alive = true;
     (async () => {
       try {
+        if (scope === 'program' && fnList.some((fn) => !totalsCache.has(`${kind}|${fn}`))) {
+          await allTotals(kind);
+        }
         const totals = await Promise.all(fnList.map((fn) => totalOf(fn, kind)));
         if (!alive) return;
         const rows: RowRef[] = [];

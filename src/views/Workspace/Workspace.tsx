@@ -53,6 +53,7 @@ export function Workspace() {
   const goBack = useAppStore((s) => s.goBack);
   const goForward = useAppStore((s) => s.goForward);
   const selectFunction = useAppStore((s) => s.selectFunction);
+  const aiOpenNonce = useAppStore((s) => s.aiOpenNonce);
 
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const saveLayout = useCallback((patch: Partial<Layout>) => {
@@ -66,6 +67,11 @@ export function Workspace() {
       return next;
     });
   }, []);
+
+  // "Explicar com IA" abre o inspetor se estiver recolhido.
+  useEffect(() => {
+    if (aiOpenNonce > 0) saveLayout({ rightOpen: true });
+  }, [aiOpenNonce, saveLayout]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

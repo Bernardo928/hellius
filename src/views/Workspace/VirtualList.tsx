@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface Props<T> {
@@ -8,10 +8,12 @@ interface Props<T> {
   empty: string;
   getKey: (item: T) => string;
   render: (item: T) => ReactNode;
+  /** Item que deve ficar visível (ex.: a função aberta). */
+  activeIndex?: number;
 }
 
 /** Lista virtualizada simples. Linhas sem backdrop-filter (regra de desempenho). */
-export function VirtualList<T>({ items, rowHeight, label, empty, getKey, render }: Props<T>) {
+export function VirtualList<T>({ items, rowHeight, label, empty, getKey, render, activeIndex }: Props<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const v = useVirtualizer({
     count: items.length,
@@ -19,6 +21,9 @@ export function VirtualList<T>({ items, rowHeight, label, empty, getKey, render 
     estimateSize: () => rowHeight,
     overscan: 12,
   });
+  useEffect(() => {
+    if (activeIndex !== undefined && activeIndex >= 0) v.scrollToIndex(activeIndex, { align: 'auto' });
+  }, [activeIndex, v]);
   if (items.length === 0) return <div className="list__empty">{empty}</div>;
   return (
     <div ref={ref} className="list" role="list" aria-label={label}>

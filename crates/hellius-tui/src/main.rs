@@ -67,7 +67,10 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App, theme: &ui::Theme
             copy_osc52(&text)?;
         }
 
-        if event::poll(Duration::from_millis(250))? {
+        if app.poll_ai() {
+            continue;
+        }
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     app.on_key(key);

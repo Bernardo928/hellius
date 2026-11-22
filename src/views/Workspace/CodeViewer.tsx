@@ -35,6 +35,8 @@ export function CodeViewer() {
   const renames = useAppStore((s) => s.renames);
   const selectAll = useAppStore((s) => s.selectAllActive);
   const demo = useAppStore((s) => s.engine?.isDemo ?? false);
+  const hasCode = useAppStore((s) => s.engine?.hasCode ?? true);
+  const partial = useAppStore((s) => s.engine?.partial ?? false);
   const jump = useAppStore((s) => s.jumpRequest);
   const searchOpen = useAppStore((s) => s.searchOpen);
   const setSelectAll = useAppStore((s) => s.setSelectAll);
@@ -325,6 +327,13 @@ export function CodeViewer() {
             {ptBR.code.demoBadge}
           </p>
         )}
+        {partial && (
+          <p className="code__demo" role="note">
+            <span className="code__demo-dot" aria-hidden="true" />
+            {ptBR.code.partial}
+          </p>
+        )}
+        {kind === 'pseudo' && <p className="code__note">{ptBR.code.pseudoNote}</p>}
       </header>
 
       {searchOpen && (
@@ -368,7 +377,7 @@ export function CodeViewer() {
       >
         {isLoading && <div className="code__state">{scope === 'program' ? ptBR.code.loadingProgram : ptBR.code.loading}</div>}
         {error && <div className="code__state code__state--error">{error}</div>}
-        {rows && rows.length === 0 && <div className="code__state">{ptBR.code.empty}</div>}
+        {rows && rows.length === 0 && <div className="code__state">{hasCode ? ptBR.code.empty : ptBR.code.noCode}</div>}
         {busy && <div className="code__busy" role="status">{ptBR.code.loading}</div>}
         {rows && rows.length > 0 && (
           <div className="code__inner" style={{ height: virtualizer.getTotalSize() }}>

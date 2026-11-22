@@ -1,9 +1,14 @@
 //! Estado e regras da versão de terminal. Sem desenho aqui: só lógica testável.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
+
+use hellius_core::ai;
 use hellius_core::render::{render_function, render_line, render_program};
 use hellius_core::{
-    parse_address, summarize, CodeKind, CodeLine, Engine, FileSummary, FunctionInfo, ImportInfo,
-    MockEngine, StringInfo,
+    open_native, parse_address, CodeKind, CodeLine, Engine, FileSummary, FunctionInfo, ImportInfo,
+    StringInfo,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -29,6 +34,24 @@ pub enum Mode {
     /// Digitando endereço ou nome (Ctrl+G ou `:`).
     Goto,
     Help,
+    /// Pergunta se pode enviar o código para a Anthropic.
+    AiConsent,
+    /// Janela com a explicação da IA.
+    Ai,
+}
+
+pub enum AiMsg {
+    Delta(String),
+    Done(Result<String, String>),
+}
+
+#[derive(Default)]
+pub struct AiView {
+    pub function: String,
+    pub text: String,
+    pub running: bool,
+    pub error: Option<String>,
+    pub scroll: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +126,9 @@ pub struct App {
     pub quit: bool,
     /// Texto que o laço principal deve mandar para a área de transferência (OSC 52).
     pub pending_copy: Option<String>,
+    pub ai: AiView,
+    ai_rx: Option<Receiver<AiMsg>>,
+    ai_cancel: Arc<AtomicBool>,
 }
 
 impl Default for App {
@@ -139,6 +165,9 @@ impl App {
             status: None,
             quit: false,
             pending_copy: None,
+            ai: AiView::default(),
+            ai_rx: None,
+            ai_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -150,9 +179,9 @@ impl App {
 
     /// Valida e analisa o arquivo. Em erro, volta à tela de abertura com a mensagem.
     pub fn open(&mut self, path: &str) {
-        match summarize(path, &mut |_, _, _| {}) {
-            Ok(summary) => {
-                let engine: Box<dyn Engine> = Box::new(MockEngine::new());
+        match open_native(path, &mut |_, _, _| {}) {
+            Ok((summary, engine)) => {
+                let engine: Box<dyn Engine> = Box::new(engine);
                 let functions = engine.list_functions();
                 let strings = engine.list_strings();
                 let imports = engine.list_imports();
@@ -168,8 +197,24 @@ impl App {
                 self.history.clear();
                 self.history_idx = 0;
                 self.current = None;
-                self.select_function(0, true);
-                self.say("Arquivo aberto. Modo demonstração: o código não é do seu arquivo.", Tone::Info);
+                let s = self.session.as_ref().expect("sessão recém-criada");
+                let start = s
+                    .functions
+                    .iter()
+                    .position(|f| f.name == "main")
+                    .or_else(|| s.functions.iter().position(|f| f.name == "entry"))
+                    .unwrap_or(0);
+                self.select_function(start, true);
+                self.list_index = start;
+                let s = self.session.as_ref().expect("sessão recém-criada");
+                let msg = if !s.engine.has_code() {
+                    "Arquivo aberto. Sem disassembler para este formato/arquitetura: veja Strings e Seções.".to_string()
+                } else if s.engine.is_partial() {
+                    format!("{} funções (análise parcial: arquivo grande).", s.functions.len())
+                } else {
+                    format!("{} funções encontradas. Pseudocódigo é tradução simplificada.", s.functions.len())
+                };
+                self.say(msg, Tone::Info);
             }
             Err(e) => {
                 self.screen = Screen::Open;
@@ -481,6 +526,35 @@ impl App {
                         self.mode = Mode::Normal;
                     }
                 }
+                Mode::AiConsent => match key.code {
+                    KeyCode::Char('s') | KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter => {
+                        let mut cfg = ai::load_config();
+                        cfg.consent = true;
+                        if let Err(e) = ai::save_config(&cfg) {
+                            self.say(format!("Não foi possível salvar o consentimento: {e}"), Tone::Error);
+                        }
+                        self.start_ai();
+                    }
+                    _ => self.mode = Mode::Normal,
+                },
+                Mode::Ai => match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        if self.ai.running {
+                            self.ai_cancel.store(true, Ordering::SeqCst);
+                        }
+                        self.mode = Mode::Normal;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => self.ai.scroll = self.ai.scroll.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => self.ai.scroll = self.ai.scroll.saturating_add(1),
+                    KeyCode::PageUp => self.ai.scroll = self.ai.scroll.saturating_sub(10),
+                    KeyCode::PageDown => self.ai.scroll = self.ai.scroll.saturating_add(10),
+                    KeyCode::Char('y') | KeyCode::Char('c') if !self.ai.text.is_empty() => {
+                        self.pending_copy = Some(self.ai.text.clone());
+                        self.say("Explicação copiada (OSC 52).", Tone::Success);
+                    }
+                    KeyCode::Char('r') if !self.ai.running => self.request_ai(),
+                    _ => {}
+                },
                 Mode::Filter => self.on_text_input(key, InputTarget::Filter),
                 Mode::Search => self.on_text_input(key, InputTarget::Search),
                 Mode::Goto => self.on_text_input(key, InputTarget::Goto),
@@ -637,6 +711,10 @@ impl App {
                 self.copy_scope();
                 return;
             }
+            KeyCode::Char('e') => {
+                self.request_ai();
+                return;
+            }
             KeyCode::Esc => {
                 self.select_all = false;
                 self.matches.clear();
@@ -689,6 +767,86 @@ impl App {
             },
         }
     }
+
+    // ---------- IA ----------
+
+    /// Tecla `e`: confere chave e consentimento, depois explica a função atual.
+    pub fn request_ai(&mut self) {
+        if self.current.is_none() || self.program_scope {
+            self.say("Abra uma função (escopo Função) para explicar.", Tone::Info);
+            return;
+        }
+        if !self.session.as_ref().is_some_and(|s| s.engine.has_code()) {
+            self.say("Sem código para explicar neste arquivo.", Tone::Error);
+            return;
+        }
+        let cfg = ai::load_config();
+        if cfg.resolve_key().is_none() {
+            self.say(ai::AiError::NoKey.to_string(), Tone::Error);
+            return;
+        }
+        if !cfg.consent {
+            self.mode = Mode::AiConsent;
+            return;
+        }
+        self.start_ai();
+    }
+
+    fn start_ai(&mut self) {
+        let cfg = ai::load_config();
+        let Some((key, _)) = cfg.resolve_key() else {
+            self.say(ai::AiError::NoKey.to_string(), Tone::Error);
+            self.mode = Mode::Normal;
+            return;
+        };
+        let Some(s) = self.session.as_ref() else { return };
+        let Some(addr) = self.current.and_then(|f| self.function_address(f)) else { return };
+        let input = match ai::input_for_function(&s.summary, s.engine.as_ref(), addr) {
+            Ok(i) => i,
+            Err(e) => {
+                self.say(e.to_string(), Tone::Error);
+                self.mode = Mode::Normal;
+                return;
+            }
+        };
+        self.ai_cancel.store(true, Ordering::SeqCst); // encerra um pedido anterior
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.ai_cancel = cancel.clone();
+        self.ai = AiView { function: input.function_name.clone(), running: true, ..AiView::default() };
+        let (tx, rx) = mpsc::channel();
+        self.ai_rx = Some(rx);
+        let model = cfg.model();
+        std::thread::spawn(move || {
+            let res = ai::explain(&key, &model, &input, &cancel, &mut |t| {
+                let _ = tx.send(AiMsg::Delta(t.to_string()));
+            });
+            let _ = tx.send(AiMsg::Done(res.map_err(|e| e.to_string())));
+        });
+        self.mode = Mode::Ai;
+    }
+
+    /// Chamado a cada ciclo do laço principal: puxa o texto que chegou.
+    pub fn poll_ai(&mut self) -> bool {
+        let Some(rx) = self.ai_rx.as_ref() else { return false };
+        let mut changed = false;
+        while let Ok(msg) = rx.try_recv() {
+            changed = true;
+            match msg {
+                AiMsg::Delta(t) => self.ai.text.push_str(&t),
+                AiMsg::Done(r) => {
+                    self.ai.running = false;
+                    match r {
+                        Ok(full) => self.ai.text = full,
+                        Err(e) => self.ai.error = Some(e),
+                    }
+                }
+            }
+        }
+        if !self.ai.running {
+            self.ai_rx = None;
+        }
+        changed
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -701,7 +859,6 @@ enum InputTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hellius_core::engine::mock::SYNTHETIC_LINES;
     use ratatui::crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -716,21 +873,18 @@ mod tests {
         }
     }
 
+    /// O próprio binário de teste: um ELF/PE/Mach-O real em qualquer sistema.
     fn opened() -> App {
-        // Arquivo próprio por teste: os testes rodam em paralelo.
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("hellius-tui-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let f = dir.join("amostra.bin");
-        std::fs::write(&f, b"conteudo de teste").unwrap();
         let mut app = App::new();
-        app.open(f.to_str().unwrap());
+        app.open(std::env::current_exe().unwrap().to_str().unwrap());
+        assert_eq!(app.screen, Screen::Workspace, "falhou ao abrir: {:?}", app.status);
         app
     }
 
-    fn synthetic_index(app: &App) -> usize {
-        app.session().unwrap().functions.iter().position(|f| f.name == "funcao_sintetica_20k").unwrap()
+    /// Índice de uma função grande o bastante para os testes.
+    fn big_function(app: &App) -> usize {
+        let s = app.session().unwrap();
+        (0..s.functions.len()).max_by_key(|&i| s.functions[i].size_bytes).unwrap()
     }
 
     #[test]
@@ -742,25 +896,26 @@ mod tests {
     }
 
     #[test]
-    fn open_selects_first_function_and_shows_demo_notice() {
+    fn open_real_binary_lists_functions_and_code() {
         let app = opened();
-        assert_eq!(app.screen, Screen::Workspace);
-        assert_eq!(app.current, Some(0));
+        let s = app.session().unwrap();
+        assert!(!s.engine.is_demo());
+        assert!(s.functions.len() > 50);
         assert!(!app.rows.is_empty());
-        assert!(app.session().unwrap().engine.is_demo());
+        assert!(app.line_at(0).is_some_and(|l| l.bytes.is_some()));
     }
 
     #[test]
-    fn select_all_and_copy_return_all_20k_lines() {
+    fn select_all_and_copy_return_every_line_of_the_function() {
         let mut app = opened();
-        let i = synthetic_index(&app);
+        let i = big_function(&app);
         app.select_function(i, true);
         app.on_key(ctrl('a'));
         assert!(app.select_all);
-        assert_eq!(app.line_count(), SYNTHETIC_LINES);
+        let n = app.line_count();
         app.on_key(key(KeyCode::Char('y')));
         let text = app.pending_copy.take().unwrap();
-        assert_eq!(text.lines().count(), SYNTHETIC_LINES);
+        assert_eq!(text.lines().count(), n);
     }
 
     #[test]
@@ -772,65 +927,91 @@ mod tests {
     }
 
     #[test]
-    fn program_scope_has_headers_and_all_lines() {
+    fn program_scope_has_a_header_per_function() {
         let mut app = opened();
         app.toggle_scope();
         let headers = app.rows.iter().filter(|r| matches!(r, Row::Header(_))).count();
         assert_eq!(headers, app.session().unwrap().functions.len());
-        assert!(app.line_count() > SYNTHETIC_LINES);
     }
 
     #[test]
     fn search_finds_and_steps_through_matches() {
         let mut app = opened();
-        app.search = "call".into();
+        let i = big_function(&app);
+        app.select_function(i, true);
+        app.search = app.line_at(0).unwrap().text.split_whitespace().next().unwrap().to_string();
         app.run_search();
         assert!(!app.matches.is_empty());
-        let first = app.cursor;
         app.step_match(true);
-        assert!(app.matches.len() == 1 || app.cursor != first);
+        assert!(app.matches.contains(&app.cursor));
     }
 
     #[test]
     fn goto_by_address_inside_function_moves_cursor() {
         let mut app = opened();
-        assert!(app.goto("0x140001004"));
-        assert_eq!(app.session().unwrap().functions[app.current.unwrap()].name, "entry");
-        assert_eq!(app.line_at(app.cursor).unwrap().address, "0x140001004");
+        let i = big_function(&app);
+        app.select_function(i, true);
+        let target = app.line_at(3).unwrap().address.clone();
+        app.select_function(0, true);
+        assert!(app.goto(&target));
+        assert_eq!(app.current, Some(i));
+        assert_eq!(app.line_at(app.cursor).unwrap().address, target);
     }
 
     #[test]
     fn follow_call_target_and_history() {
         let mut app = opened();
-        // Linha 1 de "entry" é "call 0x140001040" (main).
-        app.cursor = 1;
+        // Acha uma linha com chamada para outra função conhecida.
+        let s = app.session().unwrap();
+        let known: std::collections::HashSet<String> = s.functions.iter().map(|f| f.address.clone()).collect();
+        let n = s.functions.len();
+        let (from, row, to) = (0..n)
+            .find_map(|f| {
+                let lines = app.lines_of(f);
+                lines.iter().position(|l| l.target.as_ref().is_some_and(|t| known.contains(t))).map(|r| {
+                    let t = lines[r].target.clone().unwrap();
+                    (f, r, t)
+                })
+            })
+            .expect("nenhuma chamada direta encontrada");
+        app.select_function(from, true);
+        app.cursor = row;
         app.follow_target();
-        assert_eq!(app.session().unwrap().functions[app.current.unwrap()].name, "main");
+        let cur = &app.session().unwrap().functions[app.current.unwrap()];
+        assert_eq!(cur.address, to);
         app.back();
-        assert_eq!(app.session().unwrap().functions[app.current.unwrap()].name, "entry");
-        app.forward();
-        assert_eq!(app.session().unwrap().functions[app.current.unwrap()].name, "main");
+        assert_eq!(app.current, Some(from));
     }
 
     #[test]
     fn list_filter_narrows_functions() {
         let mut app = opened();
-        app.filter = "hash".into();
+        let name = app.session().unwrap().functions[big_function(&app)].name.clone();
+        app.filter = name.clone();
         let items = app.list_items();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].0, "compute_hash");
+        assert!(!items.is_empty());
+        assert!(items.iter().all(|(t, m, _)| t.to_lowercase().contains(&name.to_lowercase()) || m.contains(&name)));
     }
 
     #[test]
     fn ensure_visible_scrolls_with_cursor() {
         let mut app = opened();
-        let i = synthetic_index(&app);
-        app.select_function(i, true);
+        app.rows = (0..1000).map(|idx| Row::Line { func: 0, idx }).collect();
         app.cursor = 500;
         app.ensure_visible(30);
         assert_eq!(app.scroll, 471);
         app.cursor = 10;
         app.ensure_visible(30);
         assert_eq!(app.scroll, 10);
+    }
+
+    #[test]
+    fn ai_without_key_explains_how_to_configure() {
+        std::env::set_var("HELLIUS_CONFIG_DIR", std::env::temp_dir().join(format!("hellius-tui-noai-{}", std::process::id())));
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let mut app = opened();
+        app.on_key(key(KeyCode::Char('e')));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(matches!(&app.status, Some((m, Tone::Error)) if m.contains("chave")));
     }
 }

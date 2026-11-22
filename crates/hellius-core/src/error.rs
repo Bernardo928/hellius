@@ -19,6 +19,8 @@ pub enum AppError {
     FunctionNotFound(String),
     #[error("Endereço inválido: {0}")]
     BadAddress(String),
+    #[error("Falha na análise: {0}")]
+    Analysis(String),
     #[error("Escopo ou tipo de código desconhecido: {0}")]
     BadArgument(String),
 }

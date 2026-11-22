@@ -68,7 +68,7 @@ describe('CodeViewer: selecionar tudo e copiar', () => {
       functions: [
         { address: '0x140010000', name: 'grande', sizeBytes: 20000, blockCount: 1, xrefsIn: [], xrefsOut: [] },
       ],
-      engine: { name: 'Demonstração (MockEngine)', isDemo: true },
+      engine: { name: 'Demonstração (MockEngine)', isDemo: true, partial: false, hasCode: true },
       toasts: [],
     });
     void LINES;

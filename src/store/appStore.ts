@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { EngineInfo, FileSummary, FunctionInfo, ImportInfo, StringInfo, CodeKind, Scope } from '../api/types';
+import type { AiStatus, EngineInfo, FileSummary, FunctionInfo, ImportInfo, StringInfo, CodeKind, Scope } from '../api/types';
 import {
   applyReduceTransparency,
   applyTheme,
@@ -52,6 +52,17 @@ export interface AppState {
   theme: ThemeId;
   reduceTransparency: boolean;
   settingsOpen: boolean;
+  inspectorTab: 'details' | 'ai';
+  /** Muda a cada pedido de explicação, para o painel abrir o inspetor. */
+  aiOpenNonce: number;
+  ai: {
+    status: AiStatus | null;
+    requestId: number;
+    running: boolean;
+    text: string;
+    error: string | null;
+    functionAddress: string | null;
+  };
   file: FileSummary | null;
   engine: EngineInfo | null;
   functions: FunctionInfo[];
@@ -89,6 +100,9 @@ export interface AppState {
   setTheme: (t: ThemeId) => void;
   setReduceTransparency: (v: boolean) => void;
   setSettings: (v: boolean) => void;
+  setInspectorTab: (t: 'details' | 'ai') => void;
+  openAi: () => void;
+  patchAi: (p: Partial<AppState['ai']>) => void;
   setDragging: (v: boolean) => void;
   setScreen: (s: Screen) => void;
   setProgress: (p: AppState['progress']) => void;
@@ -128,6 +142,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
   theme: loadTheme(),
   reduceTransparency: loadReduceTransparency(),
   settingsOpen: false,
+  inspectorTab: 'details',
+  aiOpenNonce: 0,
+  ai: { status: null, requestId: 0, running: false, text: '', error: null, functionAddress: null },
   file: null,
   engine: null,
   functions: [],
@@ -166,12 +183,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ reduceTransparency: v });
   },
   setSettings: (v) => set({ settingsOpen: v }),
+  setInspectorTab: (t) => set({ inspectorTab: t }),
+  openAi: () => set((s) => ({ inspectorTab: 'ai', aiOpenNonce: s.aiOpenNonce + 1 })),
+  patchAi: (p) => set((s) => ({ ai: { ...s.ai, ...p } })),
   setDragging: (v) => set({ dragging: v }),
   setScreen: (s) => set({ screen: s }),
   setProgress: (p) => set({ progress: p }),
 
   setLoaded: ({ file, engine, functions, strings, imports }) => {
-    const first = functions[0]?.address ?? null;
+    // Abre em main, senão no ponto de entrada, senão na primeira função.
+    const preferred = functions.find((f) => f.name === 'main') ?? functions.find((f) => f.name === 'entry') ?? functions[0];
+    const first = preferred?.address ?? null;
     set({
       file,
       engine,

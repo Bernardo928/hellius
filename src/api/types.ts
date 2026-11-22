@@ -64,10 +64,27 @@ export interface ImportInfo {
 export interface EngineInfo {
   name: string;
   isDemo: boolean;
+  /** A análise parou num limite de tamanho. */
+  partial: boolean;
+  /** Existe disassembler para a arquitetura do arquivo. */
+  hasCode: boolean;
+}
+
+export interface FunctionTotal {
+  address: string;
+  totalLines: number;
 }
 
 export interface AnalysisProgress {
   phase: string;
   step: number;
   total: number;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  /** Onde está a chave: no app ou na variável de ambiente ANTHROPIC_API_KEY. */
+  source: 'app' | 'env' | null;
+  model: string;
+  consent: boolean;
 }

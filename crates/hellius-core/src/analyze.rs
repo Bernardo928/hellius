@@ -67,8 +67,18 @@ pub fn summarize(
     validate_path(path)?;
     let bytes = fs::read(path)?;
 
+    let summary = summary_from_bytes(path, &bytes, progress);
+    Ok(summary)
+}
+
+/// Metadados a partir dos bytes já lidos (evita ler o arquivo duas vezes).
+pub fn summary_from_bytes(
+    path: &str,
+    bytes: &[u8],
+    progress: &mut dyn FnMut(&str, u32, u32),
+) -> FileSummary {
     progress("Calculando SHA-256", 2, 4);
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let sha256 = format!("{:x}", Sha256::digest(bytes));
 
     progress("Lendo cabeçalhos", 3, 4);
     let name = Path::new(path)
@@ -89,7 +99,7 @@ pub fn summarize(
     };
 
     progress("Montando resumo", 4, 4);
-    Ok(match Object::parse(&bytes) {
+    match Object::parse(bytes) {
         Ok(Object::Elf(elf)) => FileSummary {
             format: "ELF".into(),
             arch: elf_arch(elf.header.e_machine).into(),
@@ -137,7 +147,7 @@ pub fn summarize(
             ..base
         },
         _ => base,
-    })
+    }
 }
 
 fn elf_arch(m: u16) -> &'static str {
@@ -189,6 +199,23 @@ fn pe_flags(c: u32) -> String {
     if c & 0x2000_0000 != 0 { s.push('X'); }
     if s.is_empty() { s.push('-'); }
     s
+}
+
+/// Abre um arquivo: valida, lê uma vez, extrai metadados e analisa o código.
+pub fn open_native(
+    path: &str,
+    progress: &mut dyn FnMut(&str, u32, u32),
+) -> Result<(FileSummary, crate::engine::native::NativeEngine), AppError> {
+    progress("Validando arquivo", 1, 6);
+    validate_path(path)?;
+    let bytes = fs::read(path)?;
+    let summary = summary_from_bytes(path, &bytes, &mut |p, _, _| progress(p, 2, 6));
+    let mut step = 3;
+    let engine = crate::engine::native::NativeEngine::analyze(bytes, &mut |p| {
+        progress(p, step.min(6), 6);
+        step += 1;
+    });
+    Ok((summary, engine))
 }
 
 #[cfg(test)]

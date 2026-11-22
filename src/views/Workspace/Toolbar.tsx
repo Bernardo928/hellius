@@ -15,6 +15,7 @@ import { useAppStore } from '../../store/appStore';
 import { THEME_IDS, type ThemeId } from '../../theme/themes';
 import { copyCurrentScope } from '../../lib/copyScope';
 import { goToInput } from '../../lib/navigation';
+import { explainFunction } from '../../lib/ai';
 import { ptBR } from '../../i18n/pt-BR';
 
 interface Props {
@@ -37,6 +38,10 @@ export function Toolbar({ sidebarOpen, inspectorOpen, onToggleSidebar, onToggleI
   const selectFunction = useAppStore((s) => s.selectFunction);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const setSettings = useAppStore((s) => s.setSettings);
+  const selected = useAppStore((s) => s.selectedFunction);
+  const hasCode = useAppStore((s) => s.engine?.hasCode ?? false);
+  const aiReady = useAppStore((s) => !!s.ai.status?.configured && !!s.ai.status?.consent);
+  const openAi = useAppStore((s) => s.openAi);
   const [q, setQ] = useState('');
 
   if (!file) return null;
@@ -103,8 +108,17 @@ export function Toolbar({ sidebarOpen, inspectorOpen, onToggleSidebar, onToggleI
         <GlassButton variant="primary" onClick={() => void copyCurrentScope()} icon={<IconCopy />}>
           {ptBR.top.copy}
         </GlassButton>
-        <GlassTooltip label={ptBR.top.explainTooltip}>
-          <GlassButton aria-disabled="true" icon={<IconSpark />}>
+        <GlassTooltip label={selected && hasCode ? ptBR.top.explainTooltip : ptBR.ai.needFunction}>
+          <GlassButton
+            aria-disabled={!selected || !hasCode ? 'true' : undefined}
+            icon={<IconSpark />}
+            onClick={() => {
+              if (!selected || !hasCode) return;
+              openAi();
+              // Sem chave ou sem consentimento, o painel pede antes de enviar.
+              if (aiReady) void explainFunction(selected);
+            }}
+          >
             {ptBR.top.explain}
           </GlassButton>
         </GlassTooltip>

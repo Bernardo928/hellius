@@ -1,12 +1,33 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { GlassButton, GlassInput } from '../../ui/glass';
+import { GlassButton, GlassInput, GlassTabs } from '../../ui/glass';
+import { AiPanel } from './AiPanel';
 import { IconCopy } from '../../ui/icons';
 import { useAppStore, displayName } from '../../store/appStore';
 import { copyText } from '../../lib/clipboard';
 import { ptBR } from '../../i18n/pt-BR';
 
-/** Inspetor: metadados reais do arquivo e dados da função (demonstração). */
+/** Inspetor: abas Detalhes (arquivo e função) e IA. */
 export function Inspector() {
+  const tab = useAppStore((s) => s.inspectorTab);
+  const setTab = useAppStore((s) => s.setInspectorTab);
+  return (
+    <div className="insp-wrap">
+      <GlassTabs
+        className="insp-tabs"
+        label="Inspetor"
+        tabs={[
+          { id: 'details' as const, label: ptBR.ai.details },
+          { id: 'ai' as const, label: ptBR.ai.tab },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+      <div className="insp-body">{tab === 'ai' ? <AiPanel /> : <Details />}</div>
+    </div>
+  );
+}
+
+function Details() {
   const file = useAppStore((s) => s.file);
   const functions = useAppStore((s) => s.functions);
   const selected = useAppStore((s) => s.selectedFunction);

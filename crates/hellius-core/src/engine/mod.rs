@@ -1,8 +1,10 @@
 //! Contrato de análise. A UI fala só com estes tipos via comandos Tauri.
-//! Implementações: `MockEngine` (demonstração). Futuras: `GhidraEngine`, `RizinEngine`.
+//! Implementações: `NativeEngine` (análise real, capstone) e `MockEngine` (dados fixos para testes).
+//! Futuras: `GhidraEngine`, `RizinEngine` (decompilação de verdade).
 //! Veja `docs/ENGINE.md`.
 
 pub mod mock;
+pub mod native;
 
 use serde::Serialize;
 
@@ -89,6 +91,14 @@ pub trait Engine: Send + Sync {
     /// Endereço inicial de cada função (para o escopo "programa inteiro").
     fn function_addresses(&self) -> Vec<u64>;
     fn function_name(&self, address: u64) -> Option<String>;
+    /// A análise parou num limite (arquivo muito grande).
+    fn is_partial(&self) -> bool {
+        false
+    }
+    /// Há disassembler para esta arquitetura.
+    fn has_code(&self) -> bool {
+        true
+    }
 }
 
 /// Converte "0x140001000" ou "140001000" em número.

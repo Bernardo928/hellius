@@ -53,6 +53,7 @@ function FunctionsList({ filter }: { filter: string }) {
       rowHeight={44}
       label={ptBR.tabs.functions}
       empty={ptBR.lists.empty}
+      activeIndex={list.findIndex((f) => f.address === selected)}
       getKey={(f) => f.address}
       render={(f) => (
         <button

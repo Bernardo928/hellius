@@ -60,9 +60,61 @@ pub fn draw(f: &mut Frame, app: &mut App, theme: &Theme) {
         Screen::Open => draw_open(f, app, theme, area),
         Screen::Workspace => draw_workspace(f, app, theme, area),
     }
-    if app.mode == Mode::Help {
-        draw_help(f, theme, area);
+    match app.mode {
+        Mode::Help => draw_help(f, theme, area),
+        Mode::AiConsent => draw_ai_consent(f, theme, area),
+        Mode::Ai => draw_ai(f, app, theme, area),
+        _ => {}
     }
+}
+
+fn overlay_block<'a>(theme: &Theme, title: &'a str) -> Block<'a> {
+    Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.accent())
+        .title(title)
+        .style(Style::new().bg(if theme.color { Color::Black } else { Color::Reset }))
+}
+
+fn draw_ai_consent(f: &mut Frame, theme: &Theme, area: Rect) {
+    let r = centered(area, 70.min(area.width.saturating_sub(4)), 12.min(area.height.saturating_sub(2)));
+    let lines = vec![
+        Line::from(Span::styled("Explicar com IA envia para a API da Anthropic:", theme.text())),
+        Line::default(),
+        Line::from(Span::styled("  - o disassembly desta função (até 3.000 linhas)", theme.muted())),
+        Line::from(Span::styled("  - o nome, o formato e a arquitetura do arquivo", theme.muted())),
+        Line::from(Span::styled("  - nada mais: o arquivo inteiro não sai do computador", theme.muted())),
+        Line::default(),
+        Line::from(Span::styled("O uso é cobrado na sua chave. Continuar?  s = sim · qualquer outra = não", theme.accent())),
+    ];
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(overlay_block(theme, " IA ")), r);
+}
+
+fn draw_ai(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let w = (area.width as f32 * 0.8) as u16;
+    let h = (area.height as f32 * 0.8) as u16;
+    let r = centered(area, w.max(40).min(area.width), h.max(10).min(area.height));
+    let mut lines: Vec<Line> = Vec::new();
+    if app.ai.text.is_empty() && app.ai.running {
+        lines.push(Line::from(Span::styled("Analisando a função…", theme.muted())));
+    }
+    for l in app.ai.text.lines() {
+        lines.push(Line::from(Span::styled(l.to_string(), theme.text())));
+    }
+    if let Some(e) = &app.ai.error {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(e.clone(), theme.error())));
+    }
+    let status = if app.ai.running { " gerando… Esc cancela " } else { " ↑↓ rolar · y copiar · r de novo · Esc fechar " };
+    let title = format!(" IA: {} ", app.ai.function);
+    let block = overlay_block(theme, "")
+        .title(Span::styled(title, theme.accent()))
+        .title_bottom(Line::from(Span::styled(status, theme.faint())).right_aligned())
+        .title_bottom(Line::from(Span::styled(" Gerado por IA: pode conter erros ", theme.faint())).left_aligned());
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((app.ai.scroll, 0)).block(block), r);
 }
 
 // ---------------- Tela de abertura ----------------
@@ -400,14 +452,14 @@ fn draw_status(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 fn draw_keys(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let hint = match app.mode {
         Mode::Filter | Mode::Search | Mode::Goto => "Enter confirma · Esc cancela",
-        _ => "Tab foco · Enter abrir/seguir · / buscar · : ir para · a selecionar tudo · y copiar · 1/2/3 tipo · p escopo · [ ] histórico · ? ajuda · q sair",
+        _ => "Tab foco · Enter abrir/seguir · / buscar · : ir para · a selec. tudo · y copiar · e IA · 1/2/3 tipo · p escopo · [ ] hist. · ? ajuda · q sair",
     };
     f.render_widget(Paragraph::new(Span::styled(format!(" {hint}"), theme.faint())), area);
 }
 
 fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
     let w = 64.min(area.width.saturating_sub(4));
-    let h = 22.min(area.height.saturating_sub(2));
+    let h = 23.min(area.height.saturating_sub(2));
     let r = centered(area, w, h);
     let rows: &[(&str, &str)] = &[
         ("Tab", "alternar foco entre lista e código"),
@@ -419,6 +471,7 @@ fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
         (":  Ctrl+G", "ir para endereço ou nome"),
         ("a  Ctrl+A", "selecionar tudo do escopo"),
         ("y  c", "copiar o escopo completo (OSC 52)"),
+        ("e", "explicar a função com IA (Claude)"),
         ("1 2 3", "disassembly / pseudocódigo / hex"),
         ("p", "alternar função / programa inteiro"),
         ("[  ]  Alt+← Alt+→", "voltar / avançar"),
@@ -431,7 +484,7 @@ fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
         .map(|(k, v)| Line::from(vec![Span::styled(format!("{k:<22}"), theme.accent()), Span::styled(*v, theme.text())]))
         .collect();
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled("O arquivo nunca é executado. Sem rede.", theme.faint())));
+    lines.push(Line::from(Span::styled("O arquivo nunca é executado. Rede só na IA, quando você pede.", theme.faint())));
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(lines).block(
@@ -481,19 +534,15 @@ mod tests {
     }
 
     #[test]
-    fn workspace_shows_demo_warning_and_code() {
-        let dir = std::env::temp_dir().join("hellius-tui-ui");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("x.bin");
-        std::fs::write(&p, b"abc").unwrap();
+    fn workspace_shows_real_code_without_demo_warning() {
         let mut app = App::new();
-        app.open(p.to_str().unwrap());
+        app.open(std::env::current_exe().unwrap().to_str().unwrap());
         let mut t = Terminal::new(TestBackend::new(140, 30)).unwrap();
         t.draw(|f| draw(f, &mut app, &Theme { color: false })).unwrap();
         let text = buffer_text(&t);
-        assert!(text.contains("MODO DEMONSTRAÇÃO"));
-        assert!(text.contains("sub rsp"));
+        assert!(!text.contains("MODO DEMONSTRAÇÃO"));
         assert!(text.contains("Referências de entrada"));
+        assert!(text.contains("Disassembly"));
     }
 
     #[test]
@@ -507,5 +556,28 @@ mod tests {
         app.mode = Mode::Help;
         let mut t = Terminal::new(TestBackend::new(40, 12)).unwrap();
         t.draw(|f| draw(f, &mut app, &Theme { color: true })).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod ai_tests {
+    use super::*;
+
+    #[test]
+    fn ai_overlay_renders_streamed_text() {
+        let mut app = App::new();
+        app.mode = Mode::Ai;
+        app.ai.function = "main".into();
+        app.ai.running = true;
+        app.ai.text = "Resumo: inicializa o programa.".into();
+        let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| draw(f, &mut app, &Theme { color: true })).unwrap();
+        let buf = t.backend().buffer();
+        let text: String = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect();
+        assert!(text.contains("Resumo: inicializa o programa."));
+        assert!(text.contains("IA: main"));
     }
 }
