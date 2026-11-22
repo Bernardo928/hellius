@@ -8,7 +8,7 @@
 .portal-screen__top {
   display: flex;
   justify-content: space-between;
-  padding: 16px 18px;
+  padding: 14px 16px;
 }
 
 .portal-screen__center {
@@ -17,11 +17,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 0 16px 32px;
+  gap: 22px;
+  padding: 0 16px 40px;
 }
 
-/* ----- Portal ----- */
+/* ----- Portal: o único elemento expressivo da tela ----- */
 .portal {
   position: relative;
   width: 340px;
@@ -33,7 +33,7 @@
 }
 .portal:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 8px;
+  outline-offset: 10px;
 }
 .portal.is-dragging {
   transform: scale(1.06);
@@ -48,16 +48,15 @@
   transition: transform 700ms cubic-bezier(0.6, 0, 0.2, 1), opacity 700ms ease;
 }
 
-/* Anel externo: conic-gradient girando devagar, mascarado como anel. */
 .portal__ring {
   position: absolute;
   inset: 0;
   border-radius: 50%;
   background: conic-gradient(from 0deg, #2a4bff, #7a2cff, #00c8d8, #2a4bff);
-  -webkit-mask: radial-gradient(circle, transparent 62%, #000 63%);
-  mask: radial-gradient(circle, transparent 62%, #000 63%);
+  -webkit-mask: radial-gradient(circle, transparent 64%, #000 65%);
+  mask: radial-gradient(circle, transparent 64%, #000 65%);
   animation: portal-spin 26s linear infinite;
-  opacity: 0.9;
+  opacity: 0.85;
 }
 .portal.is-dragging .portal__ring,
 .portal.is-analyzing .portal__ring {
@@ -98,7 +97,7 @@
 .portal__flying {
   position: absolute;
   left: 50%;
-  bottom: -6px;
+  bottom: -8px;
   transform: translateX(-50%);
   font-size: 12px;
   color: var(--text-muted);
@@ -113,7 +112,6 @@
   from { transform: translate(-50%, 60px) scale(0.7); opacity: 0; }
   to { transform: translate(-50%, 0) scale(1); opacity: 1; }
 }
-
 @keyframes portal-spin {
   to { transform: rotate(360deg); }
 }
@@ -126,29 +124,59 @@
   min-height: 1.4em;
 }
 
-.portal-screen__actions {
-  padding: 10px;
-  border-radius: 999px;
+/* ----- Recentes: lista simples, sem pílulas ----- */
+.recent {
+  width: min(440px, 100%);
+  margin-top: 6px;
 }
-
-.portal-screen__recent {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  max-width: 560px;
-}
-.portal-screen__recent-label {
+.recent__title {
+  margin: 0 0 6px 10px;
   font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-weight: 600;
   color: var(--text-faint);
 }
-.portal-screen__chips {
+.recent__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--hairline);
+}
+.recent__list li {
+  border-bottom: 1px solid var(--hairline);
+}
+.recent__row {
+  appearance: none;
+  width: 100%;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.recent__row:hover {
+  background: var(--control-hover);
+}
+.recent__name {
+  flex: none;
+  font-weight: 500;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent__path {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 480px) {

@@ -27,3 +27,25 @@ export function applyTheme(id: ThemeId): void {
     /* armazenamento indisponível: a troca continua valendo nesta sessão */
   }
 }
+
+const TRANSPARENCY_KEY = 'hellius.reduceTransparency';
+
+/** Ajuste do app para reduzir transparência. Necessário porque o WebKitGTK (Linux)
+ *  não expõe prefers-reduced-transparency. */
+export function loadReduceTransparency(): boolean {
+  try {
+    return window.localStorage.getItem(TRANSPARENCY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function applyReduceTransparency(on: boolean): void {
+  if (on) document.documentElement.dataset.transparency = 'reduced';
+  else delete document.documentElement.dataset.transparency;
+  try {
+    window.localStorage.setItem(TRANSPARENCY_KEY, on ? '1' : '0');
+  } catch {
+    /* armazenamento indisponível */
+  }
+}

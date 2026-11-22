@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { goToInput } from '../../lib/navigation';
-import { GlassInput, GlassButton } from '../../ui/glass';
+import { GlassButton, GlassPanel, GlassSearchField } from '../../ui/glass';
 import { Modal } from '../../components/Modal';
 import { ptBR } from '../../i18n/pt-BR';
-import { TopBar } from './TopBar';
+import { Toolbar } from './Toolbar';
 import { SidePane } from './SidePane';
 import { CodeViewer } from './CodeViewer';
 import { Inspector } from './Inspector';
@@ -15,13 +15,17 @@ import './Workspace.css';
 interface Layout {
   left: number;
   right: number;
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
+  leftOpen: boolean;
+  rightOpen: boolean;
 }
 
-const LAYOUT_KEY = 'hellius.layout';
-const DEFAULT_LAYOUT: Layout = { left: 260, right: 280, leftCollapsed: false, rightCollapsed: false };
-const LIMITS = { left: [200, 420], right: [220, 420] } as const;
+const LAYOUT_KEY = 'hellius.layout.v2';
+const DEFAULT_LAYOUT: Layout = { left: 264, right: 300, leftOpen: true, rightOpen: true };
+const LIMITS = { left: [200, 420], right: [240, 440] } as const;
+
+function clamp(v: number, [lo, hi]: readonly [number, number]): number {
+  return Math.min(hi, Math.max(lo, v));
+}
 
 function loadLayout(): Layout {
   try {
@@ -29,25 +33,19 @@ function loadLayout(): Layout {
     if (!raw) return DEFAULT_LAYOUT;
     const p = JSON.parse(raw) as Partial<Layout>;
     return {
-      left: clamp(p.left ?? DEFAULT_LAYOUT.left, LIMITS.left),
-      right: clamp(p.right ?? DEFAULT_LAYOUT.right, LIMITS.right),
-      leftCollapsed: !!p.leftCollapsed,
-      rightCollapsed: !!p.rightCollapsed,
+      left: clamp(Number(p.left) || DEFAULT_LAYOUT.left, LIMITS.left),
+      right: clamp(Number(p.right) || DEFAULT_LAYOUT.right, LIMITS.right),
+      leftOpen: p.leftOpen !== false,
+      rightOpen: p.rightOpen !== false,
     };
   } catch {
     return DEFAULT_LAYOUT;
   }
 }
 
-function clamp(v: number, [lo, hi]: readonly [number, number]): number {
-  return Math.min(hi, Math.max(lo, v));
-}
-
 export function Workspace() {
-  const selectAll = useAppStore((s) => s.selectAllActive);
   const setSelectAll = useAppStore((s) => s.setSelectAll);
   const setSearch = useAppStore((s) => s.setSearch);
-  const searchOpen = useAppStore((s) => s.searchOpen);
   const goToOpen = useAppStore((s) => s.goToOpen);
   const setGoTo = useAppStore((s) => s.setGoTo);
   const setHelp = useAppStore((s) => s.setHelp);
@@ -57,16 +55,18 @@ export function Workspace() {
   const selectFunction = useAppStore((s) => s.selectFunction);
 
   const [layout, setLayout] = useState<Layout>(loadLayout);
-  const saveLayout = useCallback((next: Layout) => {
-    setLayout(next);
-    try {
-      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
-    } catch {
-      /* sem armazenamento: o layout vale só nesta sessão */
-    }
+  const saveLayout = useCallback((patch: Partial<Layout>) => {
+    setLayout((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+      } catch {
+        /* sem armazenamento: vale só nesta sessão */
+      }
+      return next;
+    });
   }, []);
 
-  // Atalhos globais da área de trabalho.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -96,43 +96,52 @@ export function Workspace() {
     return () => window.removeEventListener('keydown', onKey);
   }, [setGoTo, setSearch, setHelp, setSelectAll, goBack, goForward, selectFunction]);
 
-  const leftW = layout.leftCollapsed ? 0 : layout.left;
-  const rightW = layout.rightCollapsed ? 0 : layout.right;
-  const gridCols = `${leftW}px 6px minmax(0, 1fr) 6px ${rightW}px`;
+  const cols = [
+    layout.leftOpen ? `${layout.left}px 8px` : '',
+    'minmax(0, 1fr)',
+    layout.rightOpen ? `8px ${layout.right}px` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <div className="ws" data-select-all={selectAll || undefined} data-search={searchOpen || undefined}>
-      <TopBar />
-      <div className="ws__main" style={{ gridTemplateColumns: gridCols }}>
-        <aside className="ws__left glass glass-floating" aria-label={ptBR.tabs.functions} hidden={layout.leftCollapsed}>
-          <SidePane />
-        </aside>
-        {layout.leftCollapsed ? (
-          <span />
-        ) : (
-          <Resizer
-            label="coluna esquerda"
-            onDelta={(dx) => saveLayout({ ...layout, left: clamp(layout.left + dx, LIMITS.left) })}
-            onToggleCollapse={() => saveLayout({ ...layout, leftCollapsed: !layout.leftCollapsed })}
-          />
+    <div className="ws">
+      <Toolbar
+        sidebarOpen={layout.leftOpen}
+        inspectorOpen={layout.rightOpen}
+        onToggleSidebar={() => saveLayout({ leftOpen: !layout.leftOpen })}
+        onToggleInspector={() => saveLayout({ rightOpen: !layout.rightOpen })}
+      />
+      <div className="ws__main" style={{ gridTemplateColumns: cols }}>
+        {layout.leftOpen && (
+          <>
+            <GlassPanel as="nav" className="ws__side" aria-label="Listas">
+              <SidePane />
+            </GlassPanel>
+            <Resizer
+              label="barra lateral"
+              onDelta={(dx) => saveLayout({ left: clamp(layout.left + dx, LIMITS.left) })}
+              onToggleCollapse={() => saveLayout({ leftOpen: false })}
+            />
+          </>
         )}
-        <main className="ws__center">
+        <main className="ws__content">
           <CodeViewer />
+          <StatusBar />
         </main>
-        {layout.rightCollapsed ? (
-          <span />
-        ) : (
-          <Resizer
-            label="coluna direita"
-            onDelta={(dx) => saveLayout({ ...layout, right: clamp(layout.right - dx, LIMITS.right) })}
-            onToggleCollapse={() => saveLayout({ ...layout, rightCollapsed: !layout.rightCollapsed })}
-          />
+        {layout.rightOpen && (
+          <>
+            <Resizer
+              label="inspetor"
+              onDelta={(dx) => saveLayout({ right: clamp(layout.right - dx, LIMITS.right) })}
+              onToggleCollapse={() => saveLayout({ rightOpen: false })}
+            />
+            <GlassPanel as="aside" className="ws__inspector" aria-label={ptBR.inspector.title}>
+              <Inspector />
+            </GlassPanel>
+          </>
         )}
-        <aside className="ws__right glass glass-floating" aria-label={ptBR.inspector.title} hidden={layout.rightCollapsed}>
-          <Inspector />
-        </aside>
       </div>
-      <StatusBar />
 
       <GoToDialog open={goToOpen} onClose={() => setGoTo(false)} />
       <Modal open={helpOpen} title={ptBR.shortcuts.title} onClose={() => setHelp(false)}>
@@ -155,9 +164,8 @@ export function Workspace() {
 
 function GoToDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [value, setValue] = useState('');
-  if (!open) return null;
   return (
-    <Modal open title="Ir para endereço" onClose={onClose}>
+    <Modal open={open} title="Ir para endereço" onClose={onClose}>
       <form
         className="goto"
         onSubmit={(e) => {
@@ -168,7 +176,7 @@ function GoToDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
           }
         }}
       >
-        <GlassInput
+        <GlassSearchField
           autoFocus
           aria-label="Endereço ou nome"
           placeholder="0x140001040 ou nome da função"

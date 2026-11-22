@@ -1,189 +1,193 @@
-/* Liquid Glass: receita em camadas. Ver README, seção "Design system".
-   Blur (backdrop-filter) só nos contêineres flutuantes; botões dentro deles são
-   translúcidos para não estourar o limite de ~6 camadas com backdrop-filter. */
+/* Liquid Glass do Hellius.
+   Regra (Apple HIG, liquid-glass.md): vidro só na camada funcional flutuante
+   (barra de ferramentas, barra lateral, inspetor, popovers, diálogos, toasts).
+   Controles DENTRO do vidro não têm vidro próprio: são "plain" (sem borda nem
+   fundo em repouso). Nada de vidro sobre vidro, nada de botão dentro de botão.
+   Um único botão de destaque (primary) por tela. */
 
+/* ---------- Material ---------- */
 .glass {
   position: relative;
   color: var(--text);
   background: var(--glass-fill);
   border: 1px solid;
   border-color: var(--glass-border-top) var(--glass-border-side) var(--glass-border-bottom) var(--glass-border-side);
-  background-clip: padding-box;
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 6px rgba(0, 0, 0, 0.12),
-    0 10px 30px -12px var(--glass-shadow);
+    0 18px 40px -20px var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur)) saturate(170%) brightness(1.08);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%) brightness(1.08);
   isolation: isolate;
-  transition: background-color 160ms ease, box-shadow 160ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-
-/* Brilho especular que segue o ponteiro (--mx / --my definidos em useSpecular). */
+/* Brilho especular que segue o ponteiro (--mx / --my via useSpecular). */
 .glass::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(
-    180px circle at var(--mx, 50%) var(--my, 0%),
-    var(--glass-specular),
-    transparent 70%
-  );
+  background: radial-gradient(220px circle at var(--mx, 50%) var(--my, -40%), var(--glass-specular), transparent 70%);
   opacity: var(--spec-opacity, 0);
-  transition: opacity 200ms ease;
+  transition: opacity 240ms ease;
   pointer-events: none;
   z-index: 0;
 }
-
 .glass:hover {
   --spec-opacity: 1;
 }
-
-/* Vidro flutuante: blur de verdade. Use com moderação. */
-.glass-floating {
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%) brightness(1.1);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%) brightness(1.1);
+.glass > * {
+  position: relative;
+  z-index: 1;
 }
 
-/* Refração (SVG feDisplacementMap). Só ativa quando detectada; ver support.ts. */
-:root[data-refract='on'] .glass-floating {
-  backdrop-filter: url(#hellius-refraction) blur(var(--glass-blur)) saturate(180%) brightness(1.1);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%) brightness(1.1);
+/* Refração SVG só onde detectada (WebView2). */
+:root[data-refract='on'] .glass {
+  backdrop-filter: url(#hellius-refraction) blur(var(--glass-blur)) saturate(170%) brightness(1.08);
 }
 
-/* Modo de desempenho baixo: sem blur em contêineres não essenciais. */
-:root[data-perf='low'] .glass-floating {
+/* FPS baixo: sem blur, material opaco. */
+:root[data-perf='low'] .glass {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  background: var(--bg);
+  background: var(--surface-solid);
 }
 
-/* Preferências de acessibilidade. */
+/* Reduzir transparência: pela preferência do sistema (Chromium/WebView2) ou pelo
+   ajuste do app (WebKitGTK no Linux não expõe a preferência). */
+:root[data-transparency='reduced'] .glass {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--surface-solid) !important;
+}
+:root[data-transparency='reduced'] .glass::after {
+  display: none;
+}
 @media (prefers-reduced-transparency: reduce) {
-  .glass,
-  .glass-floating {
+  .glass {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    background: var(--bg) !important;
+    background: var(--surface-solid) !important;
   }
   .glass::after {
     display: none;
   }
 }
 
-/* ----- Botões ----- */
+/* ---------- Botões ---------- */
 .glass-button {
   appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 10px;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
-  background: var(--glass-fill);
-  border: 1px solid;
-  border-color: var(--glass-border-top) var(--glass-border-side) var(--glass-border-bottom) var(--glass-border-side);
-  border-radius: 10px;
-  padding: 0 12px;
-  height: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 4px 14px -8px var(--glass-shadow);
-  position: relative;
-  isolation: isolate;
-  transition: background-color 160ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
+  white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease, transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-
-
-.glass-button:hover:not(:disabled) {
-  background: var(--glass-fill-hover);
+.glass-button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--control-hover);
 }
-
-.glass-button:active:not(:disabled) {
+.glass-button:active:not(:disabled):not([aria-disabled='true']) {
   transform: scale(0.97);
-  background: var(--glass-fill-active);
+  background: var(--control-active);
 }
-
-.glass-button:disabled {
-  opacity: 0.45;
+.glass-button:disabled,
+.glass-button[aria-disabled='true'] {
+  color: var(--text-faint);
   cursor: not-allowed;
 }
+.glass-button[aria-pressed='true'] {
+  background: var(--control-active);
+  color: var(--text);
+}
+.glass-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
 
-.glass-button--sm { height: 24px; padding: 0 8px; font-size: 12px; border-radius: 8px; }
-.glass-button--md { height: 30px; }
-.glass-button--lg { height: 38px; padding: 0 16px; font-size: 14px; border-radius: 12px; }
+.glass-button--sm { height: 24px; min-width: 24px; padding: 0 8px; font-size: 12px; border-radius: 7px; }
+.glass-button--lg { height: 40px; padding: 0 20px; font-size: 14px; border-radius: 12px; font-weight: 600; }
+.glass-button--icon { padding: 0; width: 28px; }
+.glass-button--icon.glass-button--sm { width: 24px; }
+.glass-button--icon.glass-button--lg { width: 40px; }
 
+/* Destaque: cor no fundo, não no rótulo. Um por tela. */
 .glass-button--primary {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: #05080f;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 18px -8px var(--accent-strong);
+  color: var(--on-accent);
+  background: var(--accent-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 24px -12px var(--accent-strong);
 }
-.glass-button--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #d6e6ff, var(--accent));
+.glass-button--primary:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--accent);
 }
-:root[data-theme='light'] .glass-button--primary,
-:root[data-theme='contrast'] .glass-button--primary {
-  color: #000;
+.glass-button--primary:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--accent-strong);
 }
+
+/* Botão independente sobre a camada de conteúdo (fora de vidro). */
+.glass-button--secondary {
+  background: var(--control-fill);
+  border-color: var(--hairline);
+}
+
 .glass-button--danger {
   color: var(--danger);
 }
-.glass-button--ghost {
-  background: transparent;
-  box-shadow: none;
-}
-.glass-button--ghost:hover:not(:disabled) {
-  background: var(--glass-fill);
-}
-.glass-button--icon {
-  width: 30px;
-  padding: 0;
-}
-.glass-button--icon.glass-button--sm {
-  width: 24px;
-}
-.glass-button[aria-pressed='true'] {
-  background: var(--glass-fill-hover);
-  box-shadow: inset 0 0 0 1px var(--accent), inset 0 1px 0 var(--glass-highlight);
-}
 
-/* ----- Painel ----- */
-.glass-panel {
-  padding: 12px;
-}
-
-/* ----- Campo de texto ----- */
+/* ---------- Campo ---------- */
 .glass-input {
   appearance: none;
-  height: 30px;
+  height: 28px;
   min-width: 0;
   font: inherit;
   color: var(--text);
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-border-bottom);
-  border-radius: 10px;
+  background: var(--control-fill);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
   padding: 0 10px;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .glass-input::placeholder {
   color: var(--text-faint);
 }
 .glass-input:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 1px;
+  outline-offset: 0;
 }
 
-/* ----- Abas ----- */
+.glass-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.glass-field > svg {
+  position: absolute;
+  left: 9px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.glass-field > .glass-input {
+  padding-left: 30px;
+  width: 100%;
+}
+
+/* ---------- Controle segmentado (abas) ---------- */
 .glass-tabs {
   display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 12px;
-  background: var(--glass-fill);
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--control-fill);
 }
 .glass-tab {
   appearance: none;
@@ -191,33 +195,34 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-weight: 600;
-  height: 26px;
+  font-weight: 500;
+  height: 24px;
   padding: 0 10px;
-  border-radius: 9px;
+  border-radius: 7px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .glass-tab:hover {
   color: var(--text);
-  background: var(--glass-fill-hover);
 }
 .glass-tab[aria-selected='true'] {
   color: var(--text);
-  background: var(--glass-fill-hover);
-  box-shadow: inset 0 0 0 1px var(--glass-border-top), inset 0 1px 0 var(--glass-highlight);
+  background: var(--segment-selected);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-/* ----- Toggle ----- */
+/* ---------- Toggle ---------- */
 .glass-toggle {
   appearance: none;
   position: relative;
-  width: 38px;
+  flex: none;
+  width: 36px;
   height: 22px;
-  border-radius: 999px;
-  border: 1px solid var(--glass-border-bottom);
-  background: var(--glass-fill);
-  cursor: pointer;
   padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--control-fill);
+  cursor: pointer;
   transition: background-color 180ms ease;
 }
 .glass-toggle::after {
@@ -235,11 +240,11 @@
   background: var(--accent-strong);
 }
 .glass-toggle[aria-checked='true']::after {
-  transform: translateX(16px);
-  background: #fff;
+  transform: translateX(14px);
+  background: var(--on-accent);
 }
 
-/* ----- Chip ----- */
+/* ---------- Chip interativo (só fora do vidro) ---------- */
 .glass-chip {
   appearance: none;
   display: inline-flex;
@@ -249,15 +254,15 @@
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid var(--glass-border-bottom);
-  background: var(--glass-fill);
+  border: 1px solid var(--hairline);
+  background: var(--control-fill);
   color: var(--text);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
-.glass-chip:hover:not(:disabled) {
-  background: var(--glass-fill-hover);
+.glass-chip:hover {
+  background: var(--control-hover);
 }
 .glass-chip__meta {
   color: var(--text-faint);
@@ -267,41 +272,48 @@
   white-space: nowrap;
 }
 
-/* ----- Toast ----- */
+/* ---------- Toast ---------- */
 .glass-toast {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  max-width: 420px;
-  padding: 10px 12px;
+  max-width: 440px;
+  padding: 8px 8px 8px 14px;
   font-size: 13px;
-  color: var(--text);
 }
-.glass-toast--error { color: var(--danger); }
-.glass-toast--success { color: var(--success); }
+.glass-toast__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.glass-toast--error .glass-toast__dot { background: var(--danger); }
+.glass-toast--success .glass-toast__dot { background: var(--success); }
 
-/* ----- Tooltip (CSS puro; aparece no hover e no foco) ----- */
+/* ---------- Tooltip ---------- */
 .glass-tooltip-host {
   position: relative;
   display: inline-flex;
 }
 .glass-tooltip {
   position: absolute;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 50%;
-  transform: translate(-50%, 4px);
+  transform: translate(-50%, -4px);
   white-space: nowrap;
   font-size: 12px;
-  padding: 4px 8px;
+  font-weight: 500;
+  padding: 5px 9px;
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--surface-solid);
   color: var(--text);
-  border: 1px solid var(--glass-border-bottom);
-  box-shadow: 0 8px 20px -8px var(--glass-shadow);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 10px 24px -10px var(--glass-shadow);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 140ms ease, transform 140ms ease;
-  z-index: 50;
+  transition: opacity 120ms ease 300ms, transform 120ms ease 300ms;
+  z-index: 60;
 }
 .glass-tooltip-host:hover .glass-tooltip,
 .glass-tooltip-host:focus-within .glass-tooltip {
@@ -309,9 +321,18 @@
   transform: translate(-50%, 0);
 }
 
-/* Alto contraste: contorno sólido, sem blur. */
+/* ---------- Alto contraste ---------- */
 :root[data-theme='contrast'] .glass,
-:root[data-theme='contrast'] .glass-button,
-:root[data-theme='contrast'] .glass-chip {
+:root[data-theme='contrast'] .glass-input,
+:root[data-theme='contrast'] .glass-chip,
+:root[data-theme='contrast'] .glass-button--secondary {
   border: 1px solid #fff;
+}
+:root[data-theme='contrast'] .glass-button:focus-visible {
+  outline-width: 3px;
+}
+
+/* Sem dica sobre o popover que o próprio botão abriu. */
+.glass-tooltip-host:has([aria-expanded='true']) .glass-tooltip {
+  display: none;
 }

@@ -1,6 +1,18 @@
 /* Tokens de cor e vidro. Tema padrão: preto. Outros temas sobrescrevem as variáveis. */
 :root,
 :root[data-theme='black'] {
+  --content-bg: #050608;
+  --selection: rgba(80, 130, 255, 0.24);
+  --cursor-line: rgba(255, 255, 255, 0.05);
+  --match: rgba(255, 212, 121, 0.14);
+  --match-current: rgba(255, 212, 121, 0.34);
+  --surface-solid: #0e1014;
+  --control-fill: rgba(255, 255, 255, 0.07);
+  --control-hover: rgba(255, 255, 255, 0.09);
+  --control-active: rgba(255, 255, 255, 0.15);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --segment-selected: rgba(255, 255, 255, 0.16);
+  --on-accent: #ffffff;
   color-scheme: dark;
   --bg: #000000;
   --surface: rgba(255, 255, 255, 0.03);
@@ -8,7 +20,7 @@
   --text-muted: #a4acba;
   --text-faint: #6f7786;
   --accent: #8ab4ff;
-  --accent-strong: #5b8cff;
+  --accent-strong: #2f5fe0;
   --danger: #ff7b8a;
   --success: #7ee7a8;
   --warning: #ffd479;
@@ -24,15 +36,15 @@
   --tok-comment: #6f8a6f;
   --tok-target: #ff9e7a;
   --tok-kw: #ff7eb6;
-  --glass-fill: rgba(255, 255, 255, 0.06);
+  --glass-fill: rgba(18, 20, 26, 0.62);
   --glass-fill-hover: rgba(255, 255, 255, 0.11);
   --glass-fill-active: rgba(255, 255, 255, 0.04);
-  --glass-border-top: rgba(255, 255, 255, 0.35);
+  --glass-border-top: rgba(255, 255, 255, 0.22);
   --glass-border-bottom: rgba(255, 255, 255, 0.05);
   --glass-border-side: rgba(255, 255, 255, 0.14);
-  --glass-highlight: rgba(255, 255, 255, 0.35);
+  --glass-highlight: rgba(255, 255, 255, 0.14);
   --glass-shadow: rgba(0, 0, 0, 0.55);
-  --glass-blur: 18px;
+  --glass-blur: 28px;
   --glass-specular: rgba(255, 255, 255, 0.18);
   --ambient-opacity: 0.25;
   --ambient-a: #2a4bff;
@@ -41,6 +53,18 @@
 }
 
 :root[data-theme='graphite'] {
+  --content-bg: #111317;
+  --selection: rgba(90, 140, 255, 0.26);
+  --cursor-line: rgba(255, 255, 255, 0.05);
+  --match: rgba(255, 217, 138, 0.14);
+  --match-current: rgba(255, 217, 138, 0.34);
+  --surface-solid: #1d2027;
+  --control-fill: rgba(255, 255, 255, 0.07);
+  --control-hover: rgba(255, 255, 255, 0.09);
+  --control-active: rgba(255, 255, 255, 0.15);
+  --hairline: rgba(255, 255, 255, 0.11);
+  --segment-selected: rgba(255, 255, 255, 0.17);
+  --on-accent: #ffffff;
   color-scheme: dark;
   --bg: #15171c;
   --surface: rgba(255, 255, 255, 0.03);
@@ -48,7 +72,7 @@
   --text-muted: #aab1bf;
   --text-faint: #7a8190;
   --accent: #9ab8ff;
-  --accent-strong: #6f93ff;
+  --accent-strong: #3462e0;
   --danger: #ff8a96;
   --success: #86e8b2;
   --warning: #ffd98a;
@@ -64,7 +88,7 @@
   --tok-comment: #7a9a7a;
   --tok-target: #ffab8c;
   --tok-kw: #ff8cc0;
-  --glass-fill: rgba(255, 255, 255, 0.07);
+  --glass-fill: rgba(34, 37, 45, 0.66);
   --glass-fill-hover: rgba(255, 255, 255, 0.12);
   --glass-fill-active: rgba(255, 255, 255, 0.05);
   --glass-border-top: rgba(255, 255, 255, 0.32);
@@ -72,7 +96,7 @@
   --glass-border-side: rgba(255, 255, 255, 0.14);
   --glass-highlight: rgba(255, 255, 255, 0.3);
   --glass-shadow: rgba(0, 0, 0, 0.4);
-  --glass-blur: 18px;
+  --glass-blur: 28px;
   --glass-specular: rgba(255, 255, 255, 0.16);
   --ambient-opacity: 0.2;
   --ambient-a: #3d5cff;
@@ -81,12 +105,24 @@
 }
 
 :root[data-theme='light'] {
+  --content-bg: #fbfcfe;
+  --selection: rgba(35, 87, 214, 0.16);
+  --cursor-line: rgba(20, 30, 60, 0.05);
+  --match: rgba(200, 140, 0, 0.16);
+  --match-current: rgba(200, 140, 0, 0.34);
+  --surface-solid: #ffffff;
+  --control-fill: rgba(20, 30, 60, 0.06);
+  --control-hover: rgba(20, 30, 60, 0.07);
+  --control-active: rgba(20, 30, 60, 0.12);
+  --hairline: rgba(20, 30, 60, 0.12);
+  --segment-selected: #ffffff;
+  --on-accent: #ffffff;
   color-scheme: light;
   --bg: #eef1f6;
   --surface: rgba(255, 255, 255, 0.4);
   --text: #15181f;
   --text-muted: #4a5263;
-  --text-faint: #6b7385;
+  --text-faint: #5b6375;
   --accent: #2357d6;
   --accent-strong: #1b45b0;
   --danger: #b3263a;
@@ -104,7 +140,7 @@
   --tok-comment: #5b7a5b;
   --tok-target: #b84a1e;
   --tok-kw: #b1245f;
-  --glass-fill: rgba(255, 255, 255, 0.55);
+  --glass-fill: rgba(255, 255, 255, 0.68);
   --glass-fill-hover: rgba(255, 255, 255, 0.75);
   --glass-fill-active: rgba(255, 255, 255, 0.4);
   --glass-border-top: rgba(255, 255, 255, 0.95);
@@ -121,6 +157,18 @@
 }
 
 :root[data-theme='contrast'] {
+  --content-bg: #000000;
+  --selection: #1f3fa0;
+  --cursor-line: #262626;
+  --match: #4a3a00;
+  --match-current: #806400;
+  --surface-solid: #000000;
+  --control-fill: #000000;
+  --control-hover: #262626;
+  --control-active: #3a3a3a;
+  --hairline: #ffffff;
+  --segment-selected: #3a3a3a;
+  --on-accent: #000000;
   color-scheme: dark;
   --bg: #000000;
   --surface: #000000;

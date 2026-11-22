@@ -1,59 +1,64 @@
 import {
+  cloneElement,
+  isValidElement,
   useId,
   useRef,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type KeyboardEvent,
-  type Ref,
+  type ReactElement,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import './glass.css';
 import { useSpecular } from './useSpecular';
+import { IconSearch } from '../icons';
 
 const cx = (...parts: (string | false | undefined | null)[]) => parts.filter(Boolean).join(' ');
 
-/* ---------- Botão ---------- */
-export type GlassButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+/* ---------- Botão ----------
+   plain: padrão. Sem borda nem fundo em repouso; é o botão que vive dentro do vidro.
+   primary: destaque com cor no fundo. Use no máximo um por tela.
+   secondary: botão independente sobre o conteúdo (fora do vidro).
+   danger: ação destrutiva. */
+export type GlassButtonVariant = 'plain' | 'primary' | 'secondary' | 'danger';
 export type GlassButtonSize = 'sm' | 'md' | 'lg';
 
 interface GlassButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: GlassButtonVariant;
   size?: GlassButtonSize;
   icon?: ReactNode;
-  /** Botão só com ícone: exige aria-label. */
+  /** Só ícone: exige aria-label. */
   iconOnly?: boolean;
-  /** Vidro flutuante com blur próprio. Padrão false: o contêiner pai já faz o blur. */
-  floating?: boolean;
   pressed?: boolean;
 }
 
 export function GlassButton({
-  variant = 'secondary',
+  variant = 'plain',
   size = 'md',
   icon,
   iconOnly = false,
-  floating = false,
   pressed,
   className,
   children,
+  onClick,
   ...rest
 }: GlassButtonProps) {
-  const ref = useRef<HTMLButtonElement>(null);
-  useSpecular(ref);
+  // aria-disabled mantém o botão focável (para ler a dica), mas ignora o clique.
+  const ariaDisabled = rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
   return (
     <button
-      ref={ref}
       type="button"
       className={cx(
         'glass-button',
-        `glass-button--${size}`,
-        variant !== 'secondary' && `glass-button--${variant}`,
+        size !== 'md' && `glass-button--${size}`,
+        variant !== 'plain' && `glass-button--${variant}`,
         iconOnly && 'glass-button--icon',
-        floating && 'glass-floating',
         className,
       )}
       aria-pressed={pressed === undefined ? undefined : pressed}
+      onClick={ariaDisabled ? (e) => e.preventDefault() : onClick}
       {...rest}
     >
       {icon}
@@ -62,22 +67,18 @@ export function GlassButton({
   );
 }
 
-/* ---------- Painel ---------- */
-interface GlassPanelProps extends HTMLAttributes<HTMLDivElement> {
-  /** Blur de verdade. Use só em contêineres flutuantes (barras, painéis laterais). */
-  floating?: boolean;
-  as?: 'div' | 'section' | 'header' | 'footer' | 'aside';
+/* ---------- Painel de vidro (camada funcional) ---------- */
+interface GlassPanelProps extends HTMLAttributes<HTMLElement> {
+  as?: 'div' | 'section' | 'header' | 'footer' | 'aside' | 'nav';
 }
 
-export function GlassPanel({ floating = true, className, children, as = 'div', ...rest }: GlassPanelProps) {
+export function GlassPanel({ className, children, as = 'div', ...rest }: GlassPanelProps) {
   const ref = useRef<HTMLElement>(null);
   useSpecular(ref);
   const Tag = as as 'div';
   return (
-    <Tag ref={ref as Ref<HTMLDivElement>} className={cx('glass', 'glass-panel', floating && 'glass-floating', className)} {...rest}>
-      <div className="glass__content" style={{ position: 'relative', zIndex: 1, height: '100%' }}>
-        {children}
-      </div>
+    <Tag ref={ref as RefObject<HTMLDivElement>} className={cx('glass', className)} {...rest}>
+      {children}
     </Tag>
   );
 }
@@ -87,7 +88,17 @@ export function GlassInput({ className, ...rest }: InputHTMLAttributes<HTMLInput
   return <input className={cx('glass-input', className)} {...rest} />;
 }
 
-/* ---------- Abas ---------- */
+/** Campo de busca com ícone de lupa. */
+export function GlassSearchField({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <span className={cx('glass-field', className)}>
+      <IconSearch size={14} />
+      <input type="search" className="glass-input" {...rest} />
+    </span>
+  );
+}
+
+/* ---------- Controle segmentado ---------- */
 export interface GlassTab<T extends string> {
   id: T;
   label: string;
@@ -135,11 +146,13 @@ interface GlassToggleProps {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  id?: string;
 }
 
-export function GlassToggle({ checked, onChange, label }: GlassToggleProps) {
+export function GlassToggle({ checked, onChange, label, id }: GlassToggleProps) {
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       className="glass-toggle"
@@ -150,7 +163,7 @@ export function GlassToggle({ checked, onChange, label }: GlassToggleProps) {
   );
 }
 
-/* ---------- Chip ---------- */
+/* ---------- Chip interativo (só fora do vidro) ---------- */
 interface GlassChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   meta?: string;
 }
@@ -174,28 +187,25 @@ interface GlassToastProps {
 }
 
 export function GlassToast({ tone = 'info', children, action }: GlassToastProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  useSpecular(ref);
   return (
-    <div
-      ref={ref}
-      role={tone === 'error' ? 'alert' : 'status'}
-      className={cx('glass', 'glass-floating', 'glass-toast', tone !== 'info' && `glass-toast--${tone}`)}
-    >
-      <div style={{ position: 'relative', zIndex: 1, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>{children}</div>
-        {action}
-      </div>
-    </div>
+    <GlassPanel role={tone === 'error' ? 'alert' : 'status'} className={cx('glass-toast', `glass-toast--${tone}`)}>
+      <span className="glass-toast__dot" aria-hidden="true" />
+      <div style={{ flex: 1 }}>{children}</div>
+      {action}
+    </GlassPanel>
   );
 }
 
-/* ---------- Tooltip ---------- */
-export function GlassTooltip({ label, children }: { label: string; children: ReactNode }) {
+/* ---------- Tooltip ----------
+   A descrição vai no próprio controle (aria-describedby), não no invólucro. */
+export function GlassTooltip({ label, children }: { label: string; children: ReactElement }) {
   const id = useId();
+  const child = isValidElement<{ 'aria-describedby'?: string }>(children)
+    ? cloneElement(children, { 'aria-describedby': id })
+    : children;
   return (
     <span className="glass-tooltip-host">
-      <span aria-describedby={id}>{children}</span>
+      {child}
       <span role="tooltip" id={id} className="glass-tooltip">
         {label}
       </span>

@@ -7,19 +7,26 @@ import {
   useState,
   type ClipboardEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { GlassButton, GlassInput, GlassTabs } from '../../ui/glass';
+import { GlassButton, GlassSearchField, GlassTabs } from '../../ui/glass';
+import { IconClose, IconDown, IconUp } from '../../ui/icons';
 import { useAppStore, displayName } from '../../store/appStore';
 import type { CodeKind, CodeLine, Scope } from '../../api/types';
 import { tokenizeAsm, tokenizeC, tokenizePlain, type Token } from '../../lib/tokenizer/asm';
 import { copyCurrentScope } from '../../lib/copyScope';
-import { parseHex } from '../../lib/navigation';
+import { goToInput, parseHex } from '../../lib/navigation';
 import { ptBR } from '../../i18n/pt-BR';
 import { CHUNK, ensureFunctionLoaded, useLayout, useLineCache, type RowRef } from './codeData';
 
-const ROW_H = 20;
+const ROW_H = 22;
 
+/**
+ * Visualizador de código (camada de conteúdo: sem vidro, sem backdrop-filter).
+ * Linhas não são botões: o clique é delegado ao contêiner. O único elemento
+ * clicável dentro de uma linha é o destino de call/jmp.
+ */
 export function CodeViewer() {
   const scope = useAppStore((s) => s.scope);
   const kind = useAppStore((s) => s.codeKind);
@@ -34,8 +41,6 @@ export function CodeViewer() {
   const setCodeKind = useAppStore((s) => s.setCodeKind);
   const setScope = useAppStore((s) => s.setScope);
   const setCursorLine = useAppStore((s) => s.setCursorLine);
-  const selectFunction = useAppStore((s) => s.selectFunction);
-  const requestJump = useAppStore((s) => s.requestJump);
   const consumeJump = useAppStore((s) => s.consumeJump);
   const setSearch = useAppStore((s) => s.setSearch);
   const setScopeTotalLines = useAppStore((s) => s.setScopeTotalLines);
@@ -50,6 +55,9 @@ export function CodeViewer() {
   const [matchPos, setMatchPos] = useState(0);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
+  // Busca: só o resultado do pedido mais recente vale.
+  const searchSeq = useRef(0);
+
   const fnName = (addr: string) => {
     const f = functions.find((x) => x.address === addr);
     return f ? displayName(f, renames) : addr;
@@ -63,7 +71,6 @@ export function CodeViewer() {
   });
   const items = virtualizer.getVirtualItems();
 
-  // Quando o conjunto de linhas muda, remede para o virtualizador re-renderizar com a janela certa.
   useEffect(() => {
     virtualizer.measure();
   }, [rows, virtualizer]);
@@ -72,14 +79,14 @@ export function CodeViewer() {
     setScopeTotalLines(rows ? rows.filter((r) => r.t === 'line').length : null);
   }, [rows, setScopeTotalLines]);
 
-  // Reset ao trocar função, escopo ou tipo.
   useEffect(() => {
     setCursor(null);
     setWord(null);
     setMatches([]);
+    searchSeq.current++;
   }, [selected, scope, kind]);
 
-  // Carrega as fatias visíveis.
+  // Fatias visíveis (com folga) sob demanda.
   const firstVisible = items[0]?.index ?? -1;
   const lastVisible = items[items.length - 1]?.index ?? -1;
   useEffect(() => {
@@ -97,10 +104,8 @@ export function CodeViewer() {
         pushToast({ tone: 'error', message: `Falha ao carregar código: ${String(e)}` }),
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, firstVisible, lastVisible, ensure]);
+  }, [rows, firstVisible, lastVisible, ensure, pushToast]);
 
-  // Carregar tudo do escopo (busca e salto). Mostra estado de carregando se demorar.
   const loadAll = useCallback(async (): Promise<RowRef[]> => {
     if (!rows) return [];
     setBusy(true);
@@ -116,7 +121,20 @@ export function CodeViewer() {
     }
   }, [rows, scope, functions, selected, ensure]);
 
-  // Pedido de salto (endereço dentro da função selecionada).
+  const moveCursor = useCallback(
+    (i: number) => {
+      if (!rows || rows.length === 0) return;
+      const idx = Math.max(0, Math.min(rows.length - 1, i));
+      setCursor(idx);
+      const r = rows[idx];
+      const l = r?.t === 'line' ? get(r.fn, r.idx) : undefined;
+      setCursorLine(idx + 1, l?.address ?? null);
+      virtualizer.scrollToIndex(idx, { align: 'auto' });
+    },
+    [rows, get, setCursorLine, virtualizer],
+  );
+
+  // Pedido de salto para um endereço dentro da função selecionada.
   useEffect(() => {
     if (!jump || !rows) return;
     let alive = true;
@@ -130,12 +148,8 @@ export function CodeViewer() {
         return l !== undefined && parseHex(l.address) === target;
       });
       consumeJump();
-      if (i >= 0) {
-        setCursor(i);
-        virtualizer.scrollToIndex(i, { align: 'center' });
-      } else {
-        pushToast({ tone: 'info', message: 'Endereço não encontrado nesta função.' });
-      }
+      if (i >= 0) moveCursor(i);
+      else pushToast({ tone: 'info', message: 'Endereço não encontrado nesta função.' });
     })().catch((e: unknown) => pushToast({ tone: 'error', message: String(e) }));
     return () => {
       alive = false;
@@ -143,15 +157,16 @@ export function CodeViewer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump, rows, version]);
 
-  // Busca: calcula ocorrências sobre o conjunto completo.
   const runSearch = useCallback(
     async (q: string) => {
+      const seq = ++searchSeq.current;
       setQuery(q);
       if (!q) {
         setMatches([]);
         return;
       }
       const all = await loadAll();
+      if (seq !== searchSeq.current) return; // chegou uma busca mais nova
       const lq = q.toLowerCase();
       const found: number[] = [];
       all.forEach((r, i) => {
@@ -175,26 +190,72 @@ export function CodeViewer() {
     virtualizer.scrollToIndex(matches[next] ?? 0, { align: 'center' });
   };
 
-  // Esc desfaz seleção/realce/busca quando o foco está no visualizador.
+  const closeSearch = () => {
+    searchSeq.current++;
+    setSearch({ searchOpen: false });
+    setQuery('');
+    setMatches([]);
+    scrollRef.current?.focus();
+  };
+
+  const followTarget = (text: string) => {
+    // Endereço no início de outra função, ou dentro dela: goToInput seleciona a função certa.
+    goToInput(text);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'a') {
       e.preventDefault();
       setSelectAll(true);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+    if (mod && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       setSearch({ searchOpen: true });
       return;
     }
-    if (e.key === 'Escape') {
-      if (searchOpen) {
-        setSearch({ searchOpen: false });
-        setQuery('');
-        setMatches([]);
+    const page = Math.max(1, Math.floor((scrollRef.current?.clientHeight ?? 400) / ROW_H) - 1);
+    const at = cursor ?? -1;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        moveCursor(at + 1);
+        return;
+      case 'ArrowUp':
+        e.preventDefault();
+        moveCursor(at - 1);
+        return;
+      case 'PageDown':
+        e.preventDefault();
+        moveCursor(at + page);
+        return;
+      case 'PageUp':
+        e.preventDefault();
+        moveCursor(at - page);
+        return;
+      case 'Home':
+        e.preventDefault();
+        moveCursor(0);
+        return;
+      case 'End':
+        e.preventDefault();
+        moveCursor((rows?.length ?? 1) - 1);
+        return;
+      case 'Enter': {
+        const r = cursor !== null ? rows?.[cursor] : undefined;
+        const target = r?.t === 'line' ? get(r.fn, r.idx)?.target : undefined;
+        if (target) {
+          e.preventDefault();
+          followTarget(target);
+        }
+        return;
       }
-      setSelectAll(false);
-      setWord(null);
+      case 'Escape':
+        if (searchOpen) closeSearch();
+        setSelectAll(false);
+        setWord(null);
+        return;
     }
   };
 
@@ -204,7 +265,24 @@ export function CodeViewer() {
     void copyCurrentScope();
   };
 
-  // Clique fora da área desfaz "Selecionar tudo".
+  // Clique delegado: a linha não é um botão.
+  const onMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-row]');
+    if (!el || (e.target as HTMLElement).closest('.tok-link')) return;
+    setSelectAll(false);
+    moveCursor(Number(el.dataset.row));
+  };
+
+  const onDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    const tok = (e.target as HTMLElement).closest<HTMLElement>('[data-tok]');
+    if (!tok) return;
+    const kindOf = tok.dataset.tok;
+    if (kindOf === 'reg' || kindOf === 'sym' || kindOf === 'mnemonic') {
+      const text = tok.textContent ?? '';
+      setWord((w) => (w === text ? null : text));
+    }
+  };
+
   useEffect(() => {
     if (!selectAll) return;
     const onDown = (ev: globalThis.MouseEvent) => {
@@ -214,32 +292,6 @@ export function CodeViewer() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [selectAll, setSelectAll]);
-
-  const onRowClick = (i: number, r: RowRef) => {
-    setSelectAll(false);
-    setCursor(i);
-    if (r.t === 'line') {
-      const l = get(r.fn, r.idx);
-      setCursorLine(i + 1, l?.address ?? null);
-    } else {
-      setCursorLine(i + 1, null);
-    }
-  };
-
-  const onTokenClick = (tok: Token) => {
-    if (tok.kind !== 'target') return;
-    const n = parseHex(tok.text);
-    if (n === null) return;
-    const hit = functions.find((f) => parseHex(f.address) === n);
-    if (hit) selectFunction(hit.address);
-    else requestJump(tok.text);
-  };
-
-  const onTokenDouble = (tok: Token) => {
-    if (tok.kind === 'reg' || tok.kind === 'sym' || tok.kind === 'mnemonic') {
-      setWord((w) => (w === tok.text ? null : tok.text));
-    }
-  };
 
   const matchSet = useMemo(() => new Set(matches), [matches]);
   const currentMatch = matches[matchPos];
@@ -254,28 +306,30 @@ export function CodeViewer() {
     { id: 'program' as const, label: ptBR.code.scopeProgram },
   ];
 
-  const headerName = selected ? fnName(selected) : '';
   const isLoading = !rows && !error;
 
   return (
-    <div className="code" aria-label="Visualizador de código">
-      <div className="code__toolbar">
-        <GlassTabs tabs={kindOptions} value={kind} onChange={(k: CodeKind) => setCodeKind(k)} label="Tipo de código" />
-        <GlassTabs
-          tabs={scopeOptions}
-          value={scope}
-          onChange={(s: Scope) => setScope(s)}
-          label="Escopo"
-        />
-        <span className="code__title mono">
-          {scope === 'function' ? headerName : ptBR.code.scopeProgram}
-        </span>
-        {demo && <span className="demo-badge">{ptBR.code.demoBadge}</span>}
-      </div>
+    <section className="code" aria-label="Código">
+      <header className="code__head">
+        <div className="code__title">
+          <span className="code__eyebrow">{scope === 'function' ? ptBR.code.scopeFunction : ptBR.code.scopeProgram}</span>
+          <h1 className="code__name mono">{scope === 'function' ? (selected ? fnName(selected) : '—') : ptBR.code.allFunctions}</h1>
+        </div>
+        <div className="code__controls">
+          <GlassTabs tabs={kindOptions} value={kind} onChange={(k: CodeKind) => setCodeKind(k)} label="Tipo de código" />
+          <GlassTabs tabs={scopeOptions} value={scope} onChange={(s: Scope) => setScope(s)} label="Escopo" />
+        </div>
+        {demo && (
+          <p className="code__demo" role="note">
+            <span className="code__demo-dot" aria-hidden="true" />
+            {ptBR.code.demoBadge}
+          </p>
+        )}
+      </header>
 
       {searchOpen && (
         <div className="code__search">
-          <GlassInput
+          <GlassSearchField
             autoFocus
             aria-label={ptBR.code.search}
             placeholder={ptBR.code.search}
@@ -285,30 +339,32 @@ export function CodeViewer() {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 stepMatch(e.shiftKey ? -1 : 1);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeSearch();
               }
             }}
           />
           <span className="code__count mono" aria-live="polite">
-            {query
-              ? matches.length
-                ? ptBR.code.matches(matchPos + 1, matches.length)
-                : ptBR.code.noMatches
-              : ''}
+            {query ? (matches.length ? ptBR.code.matches(matchPos + 1, matches.length) : ptBR.code.noMatches) : ''}
           </span>
-          <GlassButton size="sm" variant="ghost" iconOnly aria-label="Anterior" onClick={() => stepMatch(-1)} icon="↑" />
-          <GlassButton size="sm" variant="ghost" iconOnly aria-label="Próxima" onClick={() => stepMatch(1)} icon="↓" />
+          <GlassButton size="sm" iconOnly aria-label="Ocorrência anterior" onClick={() => stepMatch(-1)} icon={<IconUp size={14} />} />
+          <GlassButton size="sm" iconOnly aria-label="Próxima ocorrência" onClick={() => stepMatch(1)} icon={<IconDown size={14} />} />
+          <GlassButton size="sm" iconOnly aria-label="Fechar busca" onClick={closeSearch} icon={<IconClose size={14} />} />
         </div>
       )}
 
-      {/* Área de rolagem: sem backdrop-filter aqui (regra de desempenho). */}
       <div
         ref={scrollRef}
         className="code__scroll mono"
         tabIndex={0}
         role="region"
-        aria-label={ptBR.code.disasm}
+        aria-label={`${kindOptions.find((k) => k.id === kind)?.label ?? ''}: setas movem, Enter segue chamadas`}
         onKeyDown={onKeyDown}
         onCopy={onCopy}
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        data-select-all={selectAll || undefined}
       >
         {isLoading && <div className="code__state">{scope === 'program' ? ptBR.code.loadingProgram : ptBR.code.loading}</div>}
         {error && <div className="code__state code__state--error">{error}</div>}
@@ -320,40 +376,35 @@ export function CodeViewer() {
               const r = rows[item.index];
               if (!r) return null;
               return (
-                <div
+                <CodeRow
                   key={item.key}
-                  className="code__row-wrap"
-                  style={{ transform: `translateY(${item.start}px)`, height: ROW_H }}
-                >
-                  <CodeRow
-                    index={item.index}
-                    row={r}
-                    kind={kind}
-                    line={r.t === 'line' ? get(r.fn, r.idx) : undefined}
-                    headerName={r.t === 'header' ? fnName(r.fn) : ''}
-                    headerAddr={r.t === 'header' ? r.fn : ''}
-                    selectAll={selectAll}
-                    isCursor={cursor === item.index}
-                    isMatch={matchSet.has(item.index)}
-                    isCurrentMatch={currentMatch === item.index}
-                    word={word}
-                    onClick={onRowClick}
-                    onTokenClick={onTokenClick}
-                    onTokenDouble={onTokenDouble}
-                    version={version}
-                  />
-                </div>
+                  index={item.index}
+                  top={item.start}
+                  row={r}
+                  kind={kind}
+                  line={r.t === 'line' ? get(r.fn, r.idx) : undefined}
+                  headerName={r.t === 'header' ? fnName(r.fn) : ''}
+                  headerAddr={r.t === 'header' ? r.fn : ''}
+                  selectAll={selectAll}
+                  isCursor={cursor === item.index}
+                  isMatch={matchSet.has(item.index)}
+                  isCurrentMatch={currentMatch === item.index}
+                  word={word}
+                  onFollow={followTarget}
+                  version={version}
+                />
               );
             })}
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
 interface RowProps {
   index: number;
+  top: number;
   row: RowRef;
   kind: CodeKind;
   line: CodeLine | undefined;
@@ -364,16 +415,14 @@ interface RowProps {
   isMatch: boolean;
   isCurrentMatch: boolean;
   word: string | null;
-  onClick: (i: number, r: RowRef) => void;
-  onTokenClick: (t: Token) => void;
-  onTokenDouble: (t: Token) => void;
+  onFollow: (address: string) => void;
   version: number;
 }
 
-/** Uma linha. Memoizada: só re-renderiza quando seus próprios dados mudam. */
 const CodeRow = memo(function CodeRow(p: RowProps) {
   const cls = [
     'code__row',
+    p.row.t === 'header' && 'code__row--header',
     p.selectAll && p.row.t !== 'blank' && 'is-selected',
     p.isCursor && 'is-cursor',
     p.isMatch && 'is-match',
@@ -381,22 +430,22 @@ const CodeRow = memo(function CodeRow(p: RowProps) {
   ]
     .filter(Boolean)
     .join(' ');
-
-  const onClick = () => p.onClick(p.index, p.row);
+  const style = { transform: `translateY(${p.top}px)`, height: ROW_H };
 
   if (p.row.t === 'header') {
     return (
-      <div className="code__row code__row--header" onClick={onClick}>
-        {`; ---- ${p.headerName} @ ${p.headerAddr} ----`}
+      <div className={cls} style={style} data-row={p.index}>
+        <span className="code__gutter" aria-hidden="true">{p.index + 1}</span>
+        {`; ${p.headerName} @ ${p.headerAddr}`}
       </div>
     );
   }
-  if (p.row.t === 'blank') return <div className="code__row" />;
+  if (p.row.t === 'blank') return <div className="code__row" style={style} data-row={p.index} />;
 
   if (!p.line) {
     return (
-      <div className={cls} onClick={onClick}>
-        <span className="code__gutter">{p.index + 1}</span>
+      <div className={cls} style={style} data-row={p.index}>
+        <span className="code__gutter" aria-hidden="true">{p.index + 1}</span>
         <span className="code__placeholder">…</span>
       </div>
     );
@@ -407,35 +456,34 @@ const CodeRow = memo(function CodeRow(p: RowProps) {
     p.kind === 'disasm' ? tokenizeAsm(l.text) : p.kind === 'pseudo' ? tokenizeC(l.text) : tokenizePlain(l.text);
 
   return (
-    <div className={cls} onClick={onClick}>
+    <div className={cls} style={style} data-row={p.index}>
       <span className="code__gutter" aria-hidden="true">{p.index + 1}</span>
       <span className="code__addr">{l.address}</span>
       {p.kind !== 'pseudo' && <span className="code__bytes">{l.bytes ?? ''}</span>}
       <span className="code__text">
-        {tokens.map((t, i) => (
-          <span
-            key={i}
-            className={[
-              `tok tok--${t.kind}`,
-              p.word && t.text === p.word && 'is-occurrence',
-              t.kind === 'target' && 'tok--link',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-            onClick={(e) => {
-              if (t.kind === 'target') {
-                e.stopPropagation();
-                p.onTokenClick(t);
-              }
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              p.onTokenDouble(t);
-            }}
-          >
-            {t.text}
-          </span>
-        ))}
+        {tokens.map((t, i) => {
+          const tokCls = ['tok', `tok--${t.kind}`, p.word && t.text === p.word && 'is-occurrence'].filter(Boolean).join(' ');
+          if (t.kind === 'target') {
+            // Único elemento clicável da linha. Teclado: Enter na linha do cursor.
+            return (
+              <button
+                key={i}
+                type="button"
+                tabIndex={-1}
+                className={`${tokCls} tok-link`}
+                title={`Ir para ${t.text}`}
+                onClick={() => p.onFollow(t.text)}
+              >
+                {t.text}
+              </button>
+            );
+          }
+          return (
+            <span key={i} className={tokCls} data-tok={t.kind}>
+              {t.text}
+            </span>
+          );
+        })}
         {l.comment && <span className="tok tok--comment">{`  ; ${l.comment}`}</span>}
       </span>
     </div>

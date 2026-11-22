@@ -1,7 +1,7 @@
 # Hellius
 
-Ferramenta de engenharia reversa "tipo Ghidra, só que mais fácil". Esta fase entrega **somente a GUI desktop**
-(Tauri v2 + React + TypeScript). A análise ainda usa um `MockEngine`: os metadados do arquivo são reais, mas
+Ferramenta de engenharia reversa "tipo Ghidra, só que mais fácil". Duas interfaces sobre o mesmo núcleo Rust:
+**GUI desktop** (Tauri v2 + React + TypeScript) e **versão de terminal** (`hellius-tui`, ratatui). A análise ainda usa um `MockEngine`: os metadados do arquivo são reais, mas
 funções e código são de demonstração e a interface avisa isso o tempo todo.
 
 Não executa o arquivo analisado, não faz chamadas de rede e funciona offline (fontes empacotadas).
@@ -15,6 +15,18 @@ Windows: WebView2 (já vem no Windows 11). Node 22+, Rust estável.
 npm install
 npm run tauri dev          # desenvolvimento
 ```
+
+## Versão de terminal
+
+```bash
+cargo run -p hellius-tui -- caminho/do/arquivo     # ou sem argumento para digitar o caminho
+cargo build -p hellius-tui --release               # binário em target/release/hellius-tui
+```
+
+Atalhos: `Tab` foco, `↑↓`/`jk` mover, `Enter` abrir função ou seguir call/jmp, `/` filtrar ou buscar,
+`n`/`N` ocorrências, `:` ou `Ctrl+G` ir para endereço, `a`/`Ctrl+A` selecionar tudo, `y` copiar o escopo
+inteiro (OSC 52), `1 2 3` tipo de código, `p` função/programa, `[ ]` histórico, `?` ajuda, `q` sair.
+`NO_COLOR=1` desliga as cores. Não depende de GTK nem de servidor gráfico.
 
 ## Como compilar
 
@@ -30,7 +42,7 @@ npx tauri build                        # instaladores (exige as ferramentas de b
 npm run typecheck     # tsc
 npm run lint          # eslint (zero warnings)
 npm test              # vitest (front)
-cd src-tauri && cargo test     # testes Rust
+cargo test --workspace         # testes Rust (núcleo, TUI, app)
 ```
 
 Testes cobrem: tokenizador de assembly e C, store (histórico, renomear, seleção), tema persistido, design
@@ -40,8 +52,10 @@ validação de arquivo (caminho inexistente, pasta, vazio, hash SHA-256, metadad
 ## Estrutura
 
 ```
-src-tauri/src/      lib.rs (builder), commands.rs (comandos Tauri), analyze.rs (validação e metadados),
-                    engine/mod.rs (trait e tipos), engine/mock.rs (MockEngine), error.rs
+crates/hellius-core/ núcleo: analyze.rs (validação e metadados), engine/ (trait e MockEngine),
+                    render.rs (texto para copiar), error.rs
+crates/hellius-tui/ versão de terminal: app.rs (estado e teclado), ui.rs (desenho), tokens.rs (realce)
+src-tauri/src/      lib.rs (builder), commands.rs (comandos Tauri)
 src/api/            cliente tipado dos comandos Tauri e tipos espelhados
 src/store/          Zustand: tela, tema, arquivo, histórico, seleção
 src/ui/glass/       design system Liquid Glass (GlassButton, GlassPanel, GlassInput, GlassTabs, GlassToggle, GlassChip, GlassToast, GlassTooltip)
@@ -59,7 +73,10 @@ docs/ENGINE.md      contrato do engine
 - **Segurança**: CSP restritiva em `tauri.conf.json`. Permissões mínimas em `capabilities/default.json` (`dialog:allow-open`, `core:default`). O front recebe só metadados e fatias de código. Texto do binário sempre vai como texto (React escapa), nunca `dangerouslySetInnerHTML`.
 - **Código sob demanda**: o front busca fatias de 400 linhas. Busca, salto e "programa inteiro" carregam o que precisam. O texto completo de cópia vem do Rust.
 - **Drag-and-drop** usa `getCurrentWebview().onDragDropEvent`, porque o `drop` do HTML5 não traz o caminho no Tauri.
-- **Liquid Glass**: vidro = fundo translúcido + borda com cor por lado + highlight interno + brilho que segue o ponteiro (`--mx`/`--my`). Blur (`backdrop-filter`) só em contêineres flutuantes, não em botões nem em listas.
+- **Liquid Glass (redesenho)**: vidro só na camada funcional flutuante (barra de ferramentas, barra lateral, inspetor, popover, diálogos, toasts), como pede a diretriz da Apple (`liquid-glass.md`). Os controles dentro do vidro são `plain`: sem borda nem fundo em repouso, com preenchimento no hover e no estado pressionado. Isso acaba com o "botão dentro de botão". Um único botão de destaque por tela (`Copiar` no painel, `Abrir arquivo` no portal). O código fica na camada de conteúdo, opaca, sem vidro.
+- **Metadados do arquivo** ficam no inspetor (texto), não em pílulas na barra. Pílula que parecia botão e não era foi removida.
+- **Linhas de código não são botões**: o clique é delegado ao contêiner; o único clicável na linha é o destino de call/jmp (link de texto). Teclado: setas movem o cursor, Enter segue a chamada.
+- **Reduzir transparência**: ajuste em Ajustes (ícone de engrenagem). Necessário porque o WebKitGTK (Linux) não expõe `prefers-reduced-transparency`.
 - **Refração SVG** (`feDisplacementMap`) só é ativada onde há WebView2 (`Edg/` no User-Agent). WebKitGTK usa o fallback sem refração.
 - **Fundo ambiente**: três manchas radiais com opacidade máxima 0.25 atrás de tudo, para o vidro aparecer sobre preto.
 - **Tema padrão**: preto. Persistido em `localStorage`, com `try/catch`.
@@ -84,11 +101,13 @@ docs/ENGINE.md      contrato do engine
 
 ## Verificação feita nesta fase
 
-- `typecheck`, `lint`, `vitest` (20 testes) e `cargo test` (9 testes) passam.
+- `typecheck`, `lint`, `vitest` (29 testes) e `cargo test --workspace` (29 testes: núcleo e TUI) passam.
 - `npx tauri build --debug --no-bundle` compila o app.
 - O app abriu no Xvfb (WebKitGTK), mostrou o portal, abriu `/bin/ls` copiado (via seletor de arquivo nativo), mostrou metadados reais (ELF, x86_64, 64 bits, SHA-256), funções de demonstração e o aviso de demonstração.
 - "Selecionar tudo" + Ctrl+C na função de 20.000 linhas copiou 20.000 linhas completas para a área de transferência.
-- Não verificados: FPS real, `prefers-reduced-motion` e `prefers-reduced-transparency` no sistema (só no CSS), temas graphite e alto contraste no app (apenas a página de componentes, no Chromium), Windows.
+- Depois do redesenho: portal, painel, popover de ajustes e tema claro conferidos no app; cópia da função de 20.000 linhas devolveu 20.000 linhas.
+- TUI conferida em terminal real (tmux e xterm): abertura, erro de caminho, função de 20.000 linhas, seleção.
+- Não verificados: FPS real, `prefers-reduced-motion` no sistema (só CSS), temas grafite e alto contraste no app, Windows, cópia OSC 52 num terminal real (só teste de unidade).
 
 ## Achado durante a verificação
 

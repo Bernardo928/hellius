@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { GlassButton, GlassTabs, GlassToggle } from './Glass';
+import { GlassButton, GlassTabs, GlassToggle, GlassTooltip } from './Glass';
 
 describe('design system Liquid Glass', () => {
   it('todo botão recebe a classe de vidro', () => {
@@ -39,5 +39,34 @@ describe('design system Liquid Glass', () => {
     expect(sw).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(sw);
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('botão padrão é plain: sem classe de variante (sem moldura dentro do vidro)', () => {
+    render(<GlassButton>Copiar</GlassButton>);
+    expect(screen.getByRole('button', { name: 'Copiar' }).className).toBe('glass-button');
+  });
+
+  it('dica fica no próprio botão (aria-describedby)', () => {
+    render(
+      <GlassTooltip label="Disponível numa fase futura">
+        <GlassButton aria-disabled="true">Explicar</GlassButton>
+      </GlassTooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Explicar' });
+    expect(btn).toHaveAccessibleDescription('Disponível numa fase futura');
+  });
+
+  it('aria-disabled ignora o clique mas continua focável', () => {
+    const onClick = vi.fn();
+    render(
+      <GlassButton aria-disabled="true" onClick={onClick}>
+        Explicar
+      </GlassButton>,
+    );
+    const btn = screen.getByRole('button', { name: 'Explicar' });
+    fireEvent.click(btn);
+    expect(onClick).not.toHaveBeenCalled();
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
   });
 });

@@ -12,7 +12,19 @@ export type RowRef =
   | { t: 'line'; fn: string; idx: number };
 
 // Totais por (tipo, função). Módulo-level: sobrevive à troca de aba.
+// Limpo a cada arquivo aberto (clearCodeCaches), pois endereços se repetem entre arquivos.
 const totalsCache = new Map<string, number>();
+let generation = 0;
+
+/** Chamado ao abrir outro arquivo: invalida totais e fatias. */
+export function clearCodeCaches(): void {
+  totalsCache.clear();
+  generation++;
+}
+
+export function cacheGeneration(): number {
+  return generation;
+}
 
 async function totalOf(fn: string, kind: CodeKind): Promise<number> {
   const key = `${kind}|${fn}`;
@@ -76,6 +88,12 @@ export function useLayout(
 export function useLineCache(kind: CodeKind) {
   const cache = useRef(new Map<string, CodeLine[]>());
   const pending = useRef(new Map<string, Promise<void>>());
+  const gen = useRef(generation);
+  if (gen.current !== generation) {
+    gen.current = generation;
+    cache.current.clear();
+    pending.current.clear();
+  }
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const [version, setVersion] = useState(0);
 

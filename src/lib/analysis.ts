@@ -1,6 +1,7 @@
 // Fluxo de abertura: validação e análise pelo Rust, depois carregamento das listas.
 import { api, onAnalysisProgress } from '../api/hellius';
 import { useAppStore } from '../store/appStore';
+import { clearCodeCaches } from '../views/Workspace/codeData';
 import { ptBR } from '../i18n/pt-BR';
 
 const COLLAPSE_MS = 720;
@@ -11,13 +12,15 @@ export function errorMessage(e: unknown): string {
   return ptBR.errors.generic;
 }
 
-/** Abre um arquivo. Erros viram toast e o portal volta ao normal. */
+/** Abre um arquivo. Ignora pedidos durante outra análise. Erros viram toast. */
 export async function openFile(path: string): Promise<void> {
   const store = useAppStore.getState();
+  if (store.screen === 'analyzing') return;
   store.setScreen('analyzing');
   store.setProgress({ phase: ptBR.analysis.phaseLabel, step: 0, total: 4 });
-  const unlisten = await onAnalysisProgress((p) => useAppStore.getState().setProgress(p));
+  let unlisten: (() => void) | undefined;
   try {
+    unlisten = await onAnalysisProgress((p) => useAppStore.getState().setProgress(p));
     const file = await api.openFile(path);
     const [engine, functions, strings, imports] = await Promise.all([
       api.engineInfo(),
@@ -25,9 +28,10 @@ export async function openFile(path: string): Promise<void> {
       api.listStrings(),
       api.listImports(),
     ]);
+    // Totais e fatias do arquivo anterior não valem para este.
+    clearCodeCaches();
     useAppStore.getState().setLoaded({ file, engine, functions, strings, imports });
     useAppStore.getState().addRecent({ path: file.path, name: file.name });
-    // Transição: o portal colapsa por ~720 ms revelando o painel.
     useAppStore.getState().setProgress({ phase: 'Concluído', step: 4, total: 4 });
     await new Promise((r) => setTimeout(r, COLLAPSE_MS));
     useAppStore.getState().setScreen('workspace');
@@ -36,6 +40,6 @@ export async function openFile(path: string): Promise<void> {
     useAppStore.getState().setScreen('portal');
     useAppStore.getState().pushToast({ tone: 'error', message: `${ptBR.analysis.error}: ${errorMessage(e)}` });
   } finally {
-    unlisten();
+    unlisten?.();
   }
 }

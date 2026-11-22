@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { GlassInput, GlassTabs } from '../../ui/glass';
+import { GlassSearchField, GlassTabs } from '../../ui/glass';
 import { useAppStore, displayName, type SideTab } from '../../store/appStore';
 import { copyText } from '../../lib/clipboard';
 import { ptBR } from '../../i18n/pt-BR';
@@ -19,7 +19,7 @@ export function SidePane() {
     <div className="side">
       <div className="side__head">
         <GlassTabs tabs={tabs} value={tab} onChange={(t: SideTab) => setTab(t)} label="Listas" className="side__tabs" />
-        <GlassInput
+        <GlassSearchField
           aria-label={ptBR.lists.filter}
           placeholder={ptBR.lists.filter}
           value={filter}

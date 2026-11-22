@@ -1,7 +1,7 @@
-import { useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
 import { GlassDefs, applyRefractionFlag } from './ui/glass';
 import { useAppStore } from './store/appStore';
-import { applyTheme, THEME_IDS, type ThemeId } from './theme/themes';
+import { applyReduceTransparency, applyTheme } from './theme/themes';
 import { startFpsGuard } from './lib/fps';
 import { Portal } from './views/Portal/Portal';
 import { Workspace } from './views/Workspace/Workspace';
@@ -13,7 +13,7 @@ import { ptBR } from './i18n/pt-BR';
 export function App() {
   const screen = useAppStore((s) => s.screen);
   const theme = useAppStore((s) => s.theme);
-  const setTheme = useAppStore((s) => s.setTheme);
+  const reduceTransparency = useAppStore((s) => s.reduceTransparency);
   const aboutOpen = useAppStore((s) => s.aboutOpen);
   const setAbout = useAppStore((s) => s.setAbout);
 
@@ -27,10 +27,9 @@ export function App() {
     applyTheme(theme);
   }, [theme]);
 
-  const cycleTheme = useCallback(() => {
-    const i = THEME_IDS.indexOf(theme);
-    setTheme((THEME_IDS[(i + 1) % THEME_IDS.length] ?? 'black') as ThemeId);
-  }, [theme, setTheme]);
+  useEffect(() => {
+    applyReduceTransparency(reduceTransparency);
+  }, [reduceTransparency]);
 
   // Página de desenvolvimento dos componentes de vidro.
   if (window.location.hash === '#/dev/glass') {
@@ -49,7 +48,7 @@ export function App() {
       {screen === 'workspace' ? (
         <Workspace />
       ) : (
-        <Portal onOpenInfo={() => setAbout(true)} onOpenTheme={cycleTheme} />
+        <Portal onOpenInfo={() => setAbout(true)} />
       )}
       <Toasts />
       <AboutModal open={aboutOpen} onClose={() => setAbout(false)} />

@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import type { EngineInfo, FileSummary, FunctionInfo, ImportInfo, StringInfo, CodeKind, Scope } from '../api/types';
-import { applyTheme, loadTheme, type ThemeId } from '../theme/themes';
+import {
+  applyReduceTransparency,
+  applyTheme,
+  loadReduceTransparency,
+  loadTheme,
+  type ThemeId,
+} from '../theme/themes';
 
 export type Screen = 'portal' | 'analyzing' | 'workspace';
 export type SideTab = 'functions' | 'strings' | 'imports' | 'sections';
@@ -44,6 +50,8 @@ function saveRecent(list: RecentFile[]): void {
 export interface AppState {
   screen: Screen;
   theme: ThemeId;
+  reduceTransparency: boolean;
+  settingsOpen: boolean;
   file: FileSummary | null;
   engine: EngineInfo | null;
   functions: FunctionInfo[];
@@ -79,6 +87,8 @@ export interface AppState {
 
   // Ações
   setTheme: (t: ThemeId) => void;
+  setReduceTransparency: (v: boolean) => void;
+  setSettings: (v: boolean) => void;
   setDragging: (v: boolean) => void;
   setScreen: (s: Screen) => void;
   setProgress: (p: AppState['progress']) => void;
@@ -116,6 +126,8 @@ let toastSeq = 1;
 export const useAppStore = create<AppState>()((set, get) => ({
   screen: 'portal',
   theme: loadTheme(),
+  reduceTransparency: loadReduceTransparency(),
+  settingsOpen: false,
   file: null,
   engine: null,
   functions: [],
@@ -149,6 +161,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     applyTheme(t);
     set({ theme: t });
   },
+  setReduceTransparency: (v) => {
+    applyReduceTransparency(v);
+    set({ reduceTransparency: v });
+  },
+  setSettings: (v) => set({ settingsOpen: v }),
   setDragging: (v) => set({ dragging: v }),
   setScreen: (s) => set({ screen: s }),
   setProgress: (p) => set({ progress: p }),
