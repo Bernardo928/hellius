@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2026-10-21";
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// Modelos que aceitam `fallbacks: "default"` (troca automática se houver recusa).
@@ -268,8 +268,11 @@ pub fn explain(
         .timeout_connect(Duration::from_secs(20))
         .timeout_read(Duration::from_secs(300))
         .build();
+    // ANTHROPIC_BASE_URL (mesma convenção dos SDKs) permite usar um gateway ou proxy.
+    let base = std::env::var("ANTHROPIC_BASE_URL").ok().filter(|b| !b.trim().is_empty());
+    let url = format!("{}/v1/messages", base.as_deref().unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/'));
     let mut req = agent
-        .post(API_URL)
+        .post(&url)
         .set("x-api-key", api_key)
         .set("anthropic-version", API_VERSION)
         .set("content-type", "application/json");

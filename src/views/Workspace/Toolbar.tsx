@@ -15,7 +15,7 @@ import { useAppStore } from '../../store/appStore';
 import { THEME_IDS, type ThemeId } from '../../theme/themes';
 import { copyCurrentScope } from '../../lib/copyScope';
 import { goToInput } from '../../lib/navigation';
-import { explainFunction } from '../../lib/ai';
+import { explainFunction, refreshAiStatus } from '../../lib/ai';
 import { ptBR } from '../../i18n/pt-BR';
 
 interface Props {
@@ -40,7 +40,6 @@ export function Toolbar({ sidebarOpen, inspectorOpen, onToggleSidebar, onToggleI
   const setSettings = useAppStore((s) => s.setSettings);
   const selected = useAppStore((s) => s.selectedFunction);
   const hasCode = useAppStore((s) => s.engine?.hasCode ?? false);
-  const aiReady = useAppStore((s) => !!s.ai.status?.configured && !!s.ai.status?.consent);
   const openAi = useAppStore((s) => s.openAi);
   const [q, setQ] = useState('');
 
@@ -112,11 +111,13 @@ export function Toolbar({ sidebarOpen, inspectorOpen, onToggleSidebar, onToggleI
           <GlassButton
             aria-disabled={!selected || !hasCode ? 'true' : undefined}
             icon={<IconSpark />}
-            onClick={() => {
+            onClick={async () => {
               if (!selected || !hasCode) return;
               openAi();
-              // Sem chave ou sem consentimento, o painel pede antes de enviar.
-              if (aiReady) void explainFunction(selected);
+              // Status atualizado antes de decidir: sem chave ou sem consentimento, o painel pede antes de enviar.
+              await refreshAiStatus();
+              const st = useAppStore.getState().ai.status;
+              if (st?.configured && st.consent) void explainFunction(selected);
             }}
           >
             {ptBR.top.explain}
