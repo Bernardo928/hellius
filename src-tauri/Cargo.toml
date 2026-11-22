@@ -1,6 +1,6 @@
 [package]
 name = "hellius"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hellius: análise de binários para engenharia reversa, simplificada"
 edition = "2021"
 rust-version = "1.77"
