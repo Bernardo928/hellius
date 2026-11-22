@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.cache/
+coverage/
+src-tauri/target/
+src-tauri/gen/
+*.log
+.DS_Store
+.probe.mjs
+tsconfig.tsbuildinfo

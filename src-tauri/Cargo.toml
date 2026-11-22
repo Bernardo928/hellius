@@ -1,0 +1,29 @@
+[package]
+name = "hellius"
+version = "0.1.0"
+description = "Hellius: análise de binários para engenharia reversa, simplificada"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "hellius_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha2 = "0.10"
+goblin = "0.10"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
