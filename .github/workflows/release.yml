@@ -1,11 +1,11 @@
-# Gera o release para Windows e Linux quando uma tag v* é enviada.
+# Anexa os binários de Windows e Linux a um release quando ele é publicado no GitHub.
 # GUI: instaladores Tauri (Windows: .msi e .exe NSIS; Linux: .AppImage, .deb, .rpm).
 # Terminal: binário hellius-tui para cada sistema.
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -49,23 +49,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Hellius ${{ github.ref_name }}'
-          releaseBody: |
-            Primeira versão de demonstração do Hellius.
-
-            **Atenção:** o engine ainda é de demonstração. Os metadados do arquivo (formato, arquitetura, seções, SHA-256) são reais; funções e código exibidos são exemplos, e o app avisa isso o tempo todo. O arquivo analisado nunca é executado e o app não faz chamadas de rede.
-
-            **GUI**
-            - Windows: `Hellius_*_x64-setup.exe` (instalador) ou `Hellius_*_x64_en-US.msi`.
-            - Linux: `Hellius_*_amd64.AppImage` (portátil), `.deb` ou `.rpm`.
-
-            **Terminal** (sem interface gráfica)
-            - `hellius-tui-windows-x64.exe` e `hellius-tui-linux-x64`.
-
-            Os binários não são assinados: no Windows, o SmartScreen pode pedir confirmação.
-          releaseDraft: false
-          prerelease: true
+          # Envia para o release que disparou o workflow.
+          releaseId: ${{ github.event.release.id }}
 
   tui:
     needs: gui
@@ -93,5 +78,5 @@ jobs:
         run: cp "${{ matrix.binary }}" "${{ matrix.asset }}"
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.event.release.tag_name }}
           files: ${{ matrix.asset }}
