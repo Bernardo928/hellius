@@ -202,7 +202,8 @@ mod tests {
 
     #[test]
     fn rejects_directory() {
-        assert!(matches!(validate_path("/tmp"), Err(AppError::IsDirectory)));
+        let dir = std::env::temp_dir();
+        assert!(matches!(validate_path(dir.to_str().unwrap()), Err(AppError::IsDirectory)));
     }
 
     #[test]
