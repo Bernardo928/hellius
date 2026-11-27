@@ -13,7 +13,7 @@ use std::time::Duration;
 use app::{App, Screen};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-const USAGE: &str = "Hellius (terminal) 0.2.0
+const USAGE: &str = "Hellius (terminal) 0.3.0
 
 Uso:
   hellius-tui [arquivo]
@@ -33,7 +33,7 @@ fn main() -> io::Result<()> {
             return Ok(());
         }
         Some("-V") | Some("--version") => {
-            println!("hellius-tui 0.2.0");
+            println!("hellius-tui 0.3.0");
             return Ok(());
         }
         _ => {}

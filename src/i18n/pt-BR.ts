@@ -1,6 +1,6 @@
 // Textos da interface. Para outro idioma, copie este arquivo e traduza os valores.
 export const ptBR = {
-  app: { name: 'Hellius', version: 'Versão 0.2.0' },
+  app: { name: 'Hellius', version: 'Versão 0.3.0' },
   portal: {
     hint: 'Arraste um arquivo aqui ou clique para abrir',
     hintDrop: 'Solte para analisar',
