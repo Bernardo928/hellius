@@ -201,7 +201,8 @@ impl App {
                 let start = s
                     .functions
                     .iter()
-                    .position(|f| f.name == "main")
+                    .position(|f| f.name == "WinMain" || f.name == "wWinMain")
+                    .or_else(|| s.functions.iter().position(|f| f.name == "main"))
                     .or_else(|| s.functions.iter().position(|f| f.name == "entry"))
                     .unwrap_or(0);
                 self.select_function(start, true);
@@ -212,7 +213,7 @@ impl App {
                 } else if s.engine.is_partial() {
                     format!("{} funções (análise parcial: arquivo grande).", s.functions.len())
                 } else {
-                    format!("{} funções encontradas. Pseudocódigo é tradução simplificada.", s.functions.len())
+                    format!("{} funções encontradas. Pseudocódigo decompilado em x86/x64.", s.functions.len())
                 };
                 self.say(msg, Tone::Info);
             }

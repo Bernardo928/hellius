@@ -192,7 +192,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   setLoaded: ({ file, engine, functions, strings, imports }) => {
     // Abre em main, senão no ponto de entrada, senão na primeira função.
-    const preferred = functions.find((f) => f.name === 'main') ?? functions.find((f) => f.name === 'entry') ?? functions[0];
+    // Código do programa primeiro (WinMain/main), não o código de inicialização do compilador (entry).
+    const byName = (n: string) => functions.find((f) => f.name === n);
+    const preferred = byName('WinMain') ?? byName('wWinMain') ?? byName('main') ?? byName('entry') ?? functions[0];
     const first = preferred?.address ?? null;
     set({
       file,

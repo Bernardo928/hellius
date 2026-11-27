@@ -48,7 +48,8 @@ export const ptBR = {
     empty: 'Selecione uma função na lista para ver o código.',
     noCode: 'Não há disassembler para este formato ou arquitetura. Strings e seções continuam disponíveis.',
     partial: 'Arquivo grande: a análise parou num limite e pode não listar todas as funções.',
-    pseudoNote: 'Tradução simplificada instrução a instrução, não é decompilação.',
+    pseudoNote:
+      'Decompilado do binário (x86/x86-64). Nomes de variáveis locais, comentários e macros do fonte não existem no executável. Em ARM e MIPS: tradução instrução a instrução.',
     demoBadge: 'Código de demonstração, não é o seu arquivo',
     search: 'Buscar no código',
     noMatches: 'Nenhuma ocorrência',

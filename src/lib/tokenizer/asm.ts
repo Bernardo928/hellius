@@ -29,9 +29,9 @@ const REGISTERS = new Set([
 const SIZE_KW = new Set(['byte', 'word', 'dword', 'qword', 'ptr', 'short', 'near', 'far', 'offset']);
 
 const C_KW = new Set([
-  'int', 'void', 'char', 'unsigned', 'return', 'if', 'else', 'for', 'while', 'do', 'switch',
-  'case', 'break', 'continue', 'struct', 'const', 'static', 'sizeof', 'uint8_t', 'uint32_t',
-  'uint64_t', 'int32_t', 'int64_t',
+  'int', 'void', 'char', 'short', 'long', 'unsigned', 'return', 'if', 'else', 'for', 'while', 'do',
+  'switch', 'case', 'default', 'break', 'continue', 'goto', 'struct', 'const', 'static', 'sizeof',
+  'true', 'false', 'uint8_t', 'uint32_t', 'uint64_t', 'int32_t', 'int64_t', 'NULL',
 ]);
 
 const TOKEN_RE = /"(?:[^"\\]|\\.)*"|0x[0-9a-fA-F]+|\b\d+\b|[A-Za-z_.$][A-Za-z0-9_.$]*|\s+|[\s\S]/g;
@@ -71,9 +71,22 @@ export function tokenizeAsm(text: string): Token[] {
   return out;
 }
 
-/** Tokeniza uma linha de pseudocódigo C. */
+/** Tokeniza uma linha de pseudocódigo C. Comentários de linha e de bloco ficam inteiros. */
 export function tokenizeC(text: string): Token[] {
   const out: Token[] = [];
+  const line = text.indexOf('//');
+  const block = text.indexOf('/*');
+  const cut = [line, block].filter((i) => i >= 0 && !insideString(text, i));
+  if (cut.length > 0) {
+    const at = Math.min(...cut);
+    const end = at === block ? text.indexOf('*/', at + 2) : -1;
+    const stop = end >= 0 ? end + 2 : text.length;
+    return [
+      ...tokenizeC(text.slice(0, at)),
+      { kind: 'comment', text: text.slice(at, stop) },
+      ...(stop < text.length ? tokenizeC(text.slice(stop)) : []),
+    ];
+  }
   const parts = text.match(TOKEN_RE) ?? [];
   for (const part of parts) {
     if (/^\s+$/.test(part)) out.push({ kind: 'plain', text: part });
@@ -84,6 +97,16 @@ export function tokenizeC(text: string): Token[] {
     else out.push({ kind: 'plain', text: part });
   }
   return out;
+}
+
+/** A posição `i` cai dentro de uma string entre aspas? */
+function insideString(text: string, i: number): boolean {
+  let open = false;
+  for (let k = 0; k < i; k++) {
+    if (text[k] === '\\') k++;
+    else if (text[k] === '"') open = !open;
+  }
+  return open;
 }
 
 /** Tokens de hex: o texto ASCII ao lado dos bytes não é destacado. */

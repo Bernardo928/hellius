@@ -8,8 +8,10 @@ export function AboutModal({ open, onClose }: { open: boolean; onClose: () => vo
         {ptBR.app.name} · {ptBR.app.version}
       </p>
       <p className="inspector__muted">
-        Análise de binários simplificada: disassembly real (x86, x86-64, ARM, AArch64, MIPS) com capstone, funções,
-        imports, strings e referências cruzadas. O pseudocódigo é uma tradução simplificada, não uma decompilação.
+        Análise de binários: disassembly real (x86, x86-64, ARM, AArch64, MIPS) com capstone, funções, imports,
+        strings e referências cruzadas. Em x86 e x86-64 o pseudocódigo é decompilado (chamadas com argumentos,
+        variáveis, if/while/for/switch, constantes e structs Win32); nas demais arquiteturas é tradução instrução a
+        instrução.
       </p>
       <p className="inspector__muted">
         O arquivo analisado nunca é executado. A única chamada de rede é a explicação com IA, quando você pede: ela envia o

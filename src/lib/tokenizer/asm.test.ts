@@ -26,6 +26,16 @@ describe('tokenizeAsm', () => {
 });
 
 describe('tokenizeC', () => {
+  it('trata comentários inteiros, sem palavras-chave dentro', () => {
+    const t = tokenizeC('// a partir do binário');
+    expect(t).toEqual([{ kind: 'comment', text: '// a partir do binário' }]);
+    const b = tokenizeC('x = 1; /* do */ return x;');
+    expect(b.find((k) => k.kind === 'comment')?.text).toBe('/* do */');
+    expect(b.filter((k) => k.kind === 'kw').map((k) => k.text)).toEqual(['return']);
+    const s = tokenizeC('puts("a // b");');
+    expect(s.some((k) => k.kind === 'comment')).toBe(false);
+  });
+
   it('reconhece palavras-chave e números', () => {
     const t = tokenizeC('int main(void) { return 0; }');
     expect(t[0]).toEqual({ kind: 'kw', text: 'int' });

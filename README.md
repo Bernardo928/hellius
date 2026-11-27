@@ -7,10 +7,52 @@ A análise é real e roda em Rust, sem Ghidra nem dependências externas:
 
 - **Formatos:** PE (Windows), ELF (Linux), Mach-O (macOS). Outros arquivos abrem como dados (strings e hash).
 - **Arquiteturas com disassembly:** x86, x86-64, ARM, Thumb, AArch64, MIPS 32 (capstone).
-- **Funções:** encontradas pelo ponto de entrada, símbolos e exports, chamadas diretas, ponteiros para código e lacunas entre funções (x86). Em binários glibc, `main` é reconhecida.
+- **Funções:** encontradas pelo ponto de entrada, símbolos e exports (inclusive a tabela de símbolos COFF do MinGW), chamadas diretas, chamadas de cauda, ponteiros para código e lacunas entre funções (x86). Tabelas de `switch` são seguidas. Em binários glibc, `main` é reconhecida; em executáveis Windows sem símbolos, `WndProc` e `WinMain` são reconhecidas pelo que chamam.
 - **Nomes:** imports resolvidos nas chamadas (`strrchr@plt`, `KERNEL32.dll!GetStartupInfoW`) e strings citadas ao lado da instrução.
 - **Imports, strings (ASCII e UTF-16), seções e referências cruzadas** reais.
-- **Pseudocódigo simplificado:** tradução instrução a instrução para um C aproximado. **Não é decompilação**: não reconstrói tipos, laços nem variáveis. A interface avisa isso.
+- **Decompilador x86 / x86-64** (próprio, em Rust): chamadas com os argumentos certos (Win64, System V, stdcall/cdecl 32 bits), parâmetros e variáveis locais, `if/else`, `while`, `do/while`, `for`, `switch` (cadeia de comparações e tabela de saltos), strings no lugar dos endereços, nomes de constantes Win32 (`WM_CREATE`, `MB_OK | MB_ICONINFORMATION`, `WS_OVERLAPPEDWINDOW`...) e campos de structs (`wc.lpfnWndProc`, `msg`). Em ARM, AArch64 e MIPS o pseudocódigo continua sendo tradução instrução a instrução.
+
+### O que o decompilador recupera e o que não recupera
+
+O executável não guarda o código-fonte. Guarda instruções. O decompilador reconstrói um C equivalente:
+
+- **Recupera:** a lógica (chamadas, argumentos, condições, laços, switch), strings, constantes com nome quando a função é conhecida, parâmetros e assinaturas de `WinMain`/`WndProc`/`main`.
+- **Não recupera:** nomes de variáveis locais (`bar` vira `hMenu`, nome sugerido pelo tipo), comentários, `#define` (`ID_HELLO` vira `1`), macros (`CreateWindowA` aparece como a função real `CreateWindowExA(0, ...)`), tipos exatos de variáveis internas.
+- **Otimização muda a forma:** em `-O2` o compilador junta, reordena e desenrola código. O resultado é equivalente, não idêntico (ex.: um `for` pode virar `do/while`, e funções pequenas somem dentro de quem as chama).
+
+Exemplo: o programa Win32 de `crates/hellius-core/tests/fixtures/hello.c`, compilado com MinGW `-O2 -s` (sem símbolos), sai assim:
+
+```c
+LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    HMENU hMenu;
+    HMENU hMenu2;
+
+    switch (uMsg) {
+    case WM_CREATE:
+        hMenu = CreateMenu();
+        hMenu2 = CreatePopupMenu();
+        AppendMenuA(hMenu2, MF_STRING, 1, "Hello World");
+        AppendMenuA(hMenu2, MF_SEPARATOR, 0, NULL);
+        AppendMenuA(hMenu2, MF_STRING, 2, "Sair");
+        AppendMenuA(hMenu, MF_POPUP, hMenu2, "Menu");
+        SetMenu(hwnd, hMenu);
+        CreateWindowExA(0, "BUTTON", "Hello World", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 110, 60, 160, 40, hwnd, (HMENU)1, NULL, NULL);
+        return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    case WM_COMMAND:
+        if (LOWORD(wParam) == 1) {
+            MessageBoxA(hwnd, "Hello, World!", "Hello", MB_OK | MB_ICONINFORMATION);
+        } else if (LOWORD(wParam) == 2) {
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    }
+    return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+}
+```
 
 O arquivo analisado nunca é executado. Funciona offline; a única chamada de rede é o **Explicar com IA**, e só quando você pede.
 
@@ -111,8 +153,10 @@ docs/ENGINE.md      contrato do engine
 
 ## Limitações conhecidas
 
-- **Pseudocódigo não é decompilação.** É uma tradução instrução a instrução. Decompilação de verdade (tipos, laços, variáveis) virá com Ghidra headless ou rizin pelo mesmo contrato `Engine`.
-- **Descoberta de funções é heurística.** Saltos indiretos (tabelas de `switch`) não são seguidos; funções só alcançadas por ponteiros podem faltar fora do x86 (o preenchimento de lacunas é só x86). Em binários sem símbolos as funções se chamam `sub_<endereço>`.
+- **Decompilador só em x86/x86-64.** ARM, AArch64 e MIPS ficam com a tradução instrução a instrução.
+- **Decompilação é reconstrução**, não o fonte original (veja acima). Código muito otimizado ou ofuscado ainda gera `goto` e `__asm(...)` para instruções sem tradução (SSE/ponto flutuante, por exemplo). Tipos de variáveis locais saem genéricos (`int`, `int64_t`), e ponteiros aparecem como inteiros (`*(int *)(p + 8)`).
+- **Corretude testada por comparação**: funções de teste compiladas com gcc e MinGW (`-O0` e `-O2`), decompiladas, recompiladas a partir do pseudocódigo e comparadas com as originais em várias entradas. Não é prova para todo binário.
+- **Descoberta de funções é heurística.** Tabelas de `switch` são seguidas nos padrões de GCC e MSVC em x86/x86-64; outros formatos de tabela podem gerar funções falsas no meio de outra. Funções só alcançadas por ponteiros podem faltar fora do x86 (o preenchimento de lacunas é só x86). Em binários sem símbolos as funções se chamam `sub_<endereço>`.
 - **Nomes de imports nas chamadas**: ELF x86/x86-64 (PLT e GOT) e PE (IAT). Em Mach-O e em ARM/MIPS os imports aparecem na lista, mas as chamadas ainda não recebem o nome.
 - **Arquivo lido inteiro na memória** (até 512 MB). Binários muito grandes param em limites (30 mil funções, 6 milhões de instruções) e a interface avisa que a análise é parcial.
 - **IA**: o caminho de rede foi testado até a API (chave inválida devolve o erro certo, em português), mas a resposta completa não foi vista aqui por falta de uma chave válida no ambiente.
@@ -122,7 +166,8 @@ docs/ENGINE.md      contrato do engine
 
 ## Verificação feita
 
-- `typecheck`, `lint`, `vitest` (33 testes) e `cargo test --workspace` (43 testes: núcleo e TUI) passam; `cargo clippy` sem avisos.
+- `typecheck`, `lint`, `vitest` (34 testes) e `cargo test --workspace` (50 testes: núcleo e TUI) passam; `cargo clippy` sem avisos.
+- Decompilador: as funções de `tests/fixtures/t2.c` (recursão, `for`, `switch` por tabela, `while` com ponteiro) compiladas com gcc e MinGW em `-O0` e `-O2` foram decompiladas, o pseudocódigo foi recompilado como C e comparado com as originais em várias entradas: resultados iguais nas 4 combinações. O programa Win32 de `tests/fixtures/hello.c` sai com as mesmas chamadas, constantes e estrutura do fonte em 64 e 32 bits, com e sem símbolos. Varredura sem pânico em todas as funções de `ls`, `libc.so.6` e do `gcc` do MinGW.
 - Análise conferida em `/bin/ls` (ELF x86-64, 301 funções em 0,12 s, `main` reconhecida, chamadas como `strrchr@plt` e strings anotadas), em `libc.so.6` (≈5 mil funções em ~1 s) e em PEs do Windows x86, x86-64 e ARM64 (chamadas como `KERNEL32.dll!GetStartupInfoW`).
 - App no Xvfb (WebKitGTK): disassembly e pseudocódigo reais de `main` do `ls`, painel de IA pedindo a chave.
 - TUI em terminal real (tmux): disassembly, pseudocódigo e mensagem de chave ausente na tecla `e`.

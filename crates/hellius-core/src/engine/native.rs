@@ -4,8 +4,9 @@
 //! - Funções descobertas a partir do ponto de entrada, dos símbolos/exports e
 //!   das chamadas encontradas (descida recursiva).
 //! - Imports, strings e referências cruzadas reais.
-//! - Pseudocódigo **simplificado**: tradução instrução a instrução para um C
-//!   aproximado. Não é um decompilador (não reconstrói tipos, laços nem variáveis).
+//! - Pseudocódigo: em x86/x86-64, decompilador próprio (`decompile.rs`) que
+//!   reconstrói chamadas com argumentos, variáveis, if/while/switch e nomes de
+//!   constantes Win32. Nas outras arquiteturas, tradução instrução a instrução.
 //!
 //! O arquivo é só lido. Nada é executado.
 
@@ -18,6 +19,11 @@ use goblin::Object;
 
 use super::{format_address, CodeKind, CodeLine, Engine, FunctionInfo, ImportInfo, StringInfo};
 use crate::error::AppError;
+
+mod decompile;
+mod winapi;
+
+use decompile::Abi;
 
 /// Limites para arquivos grandes (a análise para e marca o resultado como parcial).
 const MAX_FUNCTIONS: usize = 30_000;
@@ -101,6 +107,8 @@ struct Func {
     calls: Vec<u64>,
     /// Endereços de código citados como dado (ex.: `lea rdi, [main]`): viram novas funções.
     code_refs: Vec<u64>,
+    /// Tabelas de salto (`switch`): endereço do `jmp` → destinos, na ordem do índice.
+    switches: Vec<(u64, Vec<u64>)>,
     disasm: OnceLock<Vec<CodeLine>>,
     pseudo: OnceLock<Vec<CodeLine>>,
     hex: OnceLock<Vec<CodeLine>>,
@@ -119,6 +127,8 @@ pub struct NativeEngine {
     imports: Vec<ImportInfo>,
     info: Vec<FunctionInfo>,
     partial: bool,
+    /// Formato PE (Windows): define a convenção de chamada em x86-64.
+    pe: bool,
 }
 
 impl NativeEngine {
@@ -136,6 +146,7 @@ impl NativeEngine {
             imports: vec![],
             info: vec![],
             partial: false,
+            pe: false,
         };
 
         progress("Lendo cabeçalhos e símbolos");
@@ -148,6 +159,7 @@ impl NativeEngine {
         if eng.cpu.is_some() {
             progress("Identificando funções");
             eng.discover(seeds);
+            eng.name_windows_entry_points();
             progress("Montando referências cruzadas");
             eng.build_info();
         }
@@ -160,7 +172,7 @@ impl NativeEngine {
         let data = std::mem::take(&mut self.data);
         match Object::parse(&data) {
             Ok(Object::Elf(elf)) => self.load_elf(&elf, seeds),
-            Ok(Object::PE(pe)) => self.load_pe(&pe, seeds),
+            Ok(Object::PE(pe)) => self.load_pe(&pe, &data, seeds),
             Ok(Object::Mach(Mach::Binary(m))) => self.load_macho(&m, seeds),
             _ => {}
         }
@@ -263,7 +275,8 @@ impl NativeEngine {
         }
     }
 
-    fn load_pe(&mut self, pe: &goblin::pe::PE, seeds: &mut BTreeMap<u64, String>) {
+    fn load_pe(&mut self, pe: &goblin::pe::PE, data: &[u8], seeds: &mut BTreeMap<u64, String>) {
+        self.pe = true;
         self.cpu = match pe.header.coff_header.machine {
             0x014c => Some(CpuArch::X86),
             0x8664 => Some(CpuArch::X64),
@@ -289,6 +302,30 @@ impl NativeEngine {
         for e in &pe.exports {
             if let (Some(name), Some(rva)) = (e.name, (e.rva != 0).then_some(e.rva)) {
                 seeds.insert(base + rva as u64, name.to_string());
+            }
+        }
+        // Tabela de símbolos COFF (MinGW sem `-s`): nomes reais das funções.
+        if let (Ok(Some(symtab)), Ok(Some(strtab))) =
+            (pe.header.coff_header.symbols(data), pe.header.coff_header.strings(data))
+        {
+            for (_, inline, sym) in symtab.iter() {
+                if sym.derived_type() != goblin::pe::symbol::IMAGE_SYM_DTYPE_FUNCTION || sym.section_number < 1 {
+                    continue;
+                }
+                let Some(sec) = pe.sections.get(sym.section_number as usize - 1) else { continue };
+                let name = match inline {
+                    Some(n) => n.to_string(),
+                    None => match sym.name(&strtab) {
+                        Ok(n) => n.to_string(),
+                        Err(_) => continue,
+                    },
+                };
+                if name.is_empty() || name.starts_with('.') {
+                    continue;
+                }
+                let va = base + u64::from(sec.virtual_address) + u64::from(sym.value);
+                let clean = winapi::clean_name(&name);
+                seeds.entry(va).or_insert(clean);
             }
         }
         for imp in &pe.imports {
@@ -492,8 +529,13 @@ impl NativeEngine {
         let mut blocks = BTreeSet::from([start]);
         let mut calls = Vec::new();
         let mut code_refs = Vec::new();
+        let mut switches: Vec<(u64, Vec<u64>)> = Vec::new();
+        // Último `lea reg, [rip + X]` visto na função (base de tabela içada para fora do laço).
+        let mut leas: HashMap<String, u64> = HashMap::new();
         let mut work = vec![start];
         while let Some(mut pc) = work.pop() {
+            // Últimas instruções do caminho linear (para achar tabelas de salto).
+            let mut recent: Vec<(String, String, u64)> = Vec::new();
             loop {
                 if insns.contains_key(&pc) || insns.len() >= MAX_INSNS_PER_FUNCTION {
                     break;
@@ -507,10 +549,21 @@ impl NativeEngine {
                 let Some(ins) = dis.iter().next() else { break };
                 let len = ins.len() as u8;
                 insns.insert(pc, len);
-                let mn = ins.mnemonic().unwrap_or("");
+                let mn = strip_prefixes(ins.mnemonic().unwrap_or(""));
                 let op = ins.op_str().unwrap_or("");
                 let flow = classify(cpu, mn, op);
                 let next = pc + u64::from(len);
+                if cpu == CpuArch::X64 && mn == "lea" {
+                    if let (Some(r), Some(v)) = (op.split(',').next(), rip_relative(op, next)) {
+                        leas.insert(r.trim().to_string(), v);
+                    }
+                }
+                if cpu.is_x86() {
+                    recent.push((mn.to_string(), op.to_string(), next));
+                    if recent.len() > 12 {
+                        recent.remove(0);
+                    }
+                }
                 if flow == Flow::Normal && (mn == "lea" || mn == "mov" || mn == "push" || mn == "adr" || mn == "adrp") {
                     let r = if cpu == CpuArch::X64 { rip_relative(op, next) } else { imm_target(op) };
                     if let Some(r) = r.filter(|r| self.is_code(*r)) {
@@ -534,6 +587,26 @@ impl NativeEngine {
                         pc = next;
                     }
                     Flow::Jump(t) => {
+                        // `pop rbp; jmp outra_funcao` / `add rsp, N; jmp ...`: chamada de cauda.
+                        let after_epilogue = cpu.is_x86()
+                            && recent.len() >= 2
+                            && matches!(recent[recent.len() - 2].0.as_str(), "pop" | "leave")
+                            || (recent.len() >= 2
+                                && recent[recent.len() - 2].0 == "add"
+                                && (recent[recent.len() - 2].1.starts_with("rsp,") || recent[recent.len() - 2].1.starts_with("esp,")));
+                        if let Some(tc) = t.filter(|&x| after_epilogue && self.is_code(x) && (x < start || x > pc + 0x200)) {
+                            calls.push(tc);
+                            break;
+                        }
+                        if t.is_none() && cpu.is_x86() && mn == "jmp" {
+                            if let Some(ts) = self.jump_table(cpu, pc, &recent, &leas) {
+                                for &x in &ts {
+                                    blocks.insert(x);
+                                    work.push(x);
+                                }
+                                switches.push((pc, ts));
+                            }
+                        }
                         if let Some(t) = t.filter(|t| self.is_code(*t)) {
                             if names.contains_key(&t) && t != start {
                                 calls.push(t); // salto de cauda para outra função
@@ -559,12 +632,147 @@ impl NativeEngine {
             blocks,
             calls,
             code_refs,
+            switches,
             disasm: OnceLock::new(),
             pseudo: OnceLock::new(),
             hex: OnceLock::new(),
         }
     }
 
+
+    /// Executável Windows sem símbolos: a função que chama `DefWindowProc` é o
+    /// procedimento de janela (`WndProc`) e a que registra a classe e roda o laço
+    /// de mensagens é o `WinMain`. Só renomeia funções sem nome (`sub_*`).
+    fn name_windows_entry_points(&mut self) {
+        if !self.pe {
+            return;
+        }
+        let Some(cpu) = self.cpu.filter(|c| c.is_x86()) else { return };
+        let slots = |want: &[&str]| -> BTreeSet<u64> {
+            self.extern_names
+                .iter()
+                .filter(|(_, n)| want.contains(&winapi::clean_name(n).as_str()))
+                .map(|(a, _)| *a)
+                .collect()
+        };
+        let defproc = slots(&["DefWindowProcA", "DefWindowProcW"]);
+        if defproc.is_empty() {
+            return;
+        }
+        let getmsg = slots(&["GetMessageA", "GetMessageW"]);
+        let regcls = slots(&["RegisterClassA", "RegisterClassW", "RegisterClassExA", "RegisterClassExW"]);
+        let Ok(cs) = cpu.capstone() else { return };
+        let has = |n: &str| self.funcs.iter().any(|f| f.name == n);
+        let mut want_wndproc = !has("WndProc");
+        let mut want_winmain = !has("WinMain") && !has("wWinMain");
+        let mut renames: Vec<(usize, &str)> = vec![];
+        for (i, f) in self.funcs.iter().enumerate() {
+            if !(want_wndproc || want_winmain) {
+                break;
+            }
+            if !f.name.starts_with("sub_") || f.insns.len() > 3000 {
+                continue;
+            }
+            let mut refs: BTreeSet<u64> = BTreeSet::new();
+            for &(addr, len) in &f.insns {
+                let Some(code) = self.bytes_at(addr, len as usize) else { continue };
+                let Ok(dis) = cs.disasm_count(code, addr, 1) else { continue };
+                let Some(ins) = dis.iter().next() else { continue };
+                let op = ins.op_str().unwrap_or("");
+                if cpu == CpuArch::X64 {
+                    if let Some(ea) = rip_relative(op, addr + u64::from(len)) {
+                        refs.insert(ea);
+                    }
+                }
+                for tok in op.split([',', '[', ']', ' ']) {
+                    if let Some(v) = parse_num(tok) {
+                        refs.insert(v);
+                    }
+                }
+            }
+            let uses = |set: &BTreeSet<u64>| refs.iter().any(|r| set.contains(r));
+            if want_winmain && uses(&getmsg) && uses(&regcls) {
+                renames.push((i, "WinMain"));
+                want_winmain = false;
+            } else if want_wndproc && uses(&defproc) && !uses(&getmsg) {
+                renames.push((i, "WndProc"));
+                want_wndproc = false;
+            }
+        }
+        for (i, n) in renames {
+            self.funcs[i].name = n.to_string();
+        }
+    }
+
+    /// Tabela de saltos de um `switch` (x86): `cmp idx, N; ja default` seguido de
+    /// `jmp [tabela + idx*4|8]` (absoluta) ou `movsxd/mov r, [base + idx*4]; add r, base; jmp r`
+    /// (relativa, GCC e MSVC x64). Devolve os destinos na ordem do índice.
+    fn jump_table(&self, cpu: CpuArch, jmp_addr: u64, recent: &[(String, String, u64)], leas: &HashMap<String, u64>) -> Option<Vec<u64>> {
+        let (_, jop, _) = recent.last()?;
+        // Limite: `cmp X, N` + `ja`/`jae` antes do salto.
+        let mut count: Option<u64> = None;
+        for i in (1..recent.len()).rev() {
+            let mn = recent[i].0.as_str();
+            if matches!(mn, "ja" | "jae" | "jnbe" | "jnb") {
+                let (pmn, pop, _) = &recent[i - 1];
+                if pmn == "cmp" {
+                    // Limite pode vir em decimal curto (`cmp eax, 6`).
+                    let t = pop.rsplit(',').next()?.trim();
+                    let n = parse_num(t).or_else(|| t.parse::<u64>().ok())?;
+                    count = Some(if matches!(mn, "ja" | "jnbe") { n + 1 } else { n });
+                }
+                break;
+            }
+        }
+        let count = count.filter(|&n| n > 0 && n <= 4096)?;
+        let read = |a: u64, size: usize| -> Option<u64> {
+            let b = self.bytes_at(a, size)?;
+            match size {
+                8 => Some(u64::from_le_bytes(b.try_into().ok()?)),
+                _ => Some(u64::from(u32::from_le_bytes(b.try_into().ok()?))),
+            }
+        };
+        let inside = |op: &str| op.split(['[', ']']).nth(1).map(str::to_string);
+        let mut targets = Vec::with_capacity(count as usize);
+        if let Some(mem) = inside(jop) {
+            // Absoluta: [idx*S + tabela]
+            let parts: Vec<&str> = mem.split('+').map(str::trim).collect();
+            let scale: u64 = parts.iter().find_map(|p| p.split_once('*').and_then(|(_, s)| s.parse().ok()))?;
+            let table = parts.iter().find_map(|p| parse_num(p))?;
+            if parts.len() != 2 || !(scale == 4 || scale == 8) {
+                return None;
+            }
+            for i in 0..count {
+                targets.push(read(table + i * scale, scale as usize)?);
+            }
+        } else if cpu == CpuArch::X64 {
+            let jreg = jop.trim();
+            // add jreg, base
+            let add_at = recent.iter().rposition(|(m, o, _)| m == "add" && o.starts_with(&format!("{jreg},")))?;
+            let base_reg = recent[add_at].1.split(',').nth(1)?.trim().to_string();
+            // Carga da tabela: `movsxd r, dword [..]` ou `mov r32, dword [..]` (+ `cdqe`).
+            let load_at = recent[..add_at].iter().rposition(|(m, o, _)| (m == "movsxd" || m == "mov") && o.contains("dword ptr ["))?;
+            let (load_mn, load_op, _) = recent[load_at].clone();
+            let signed = load_mn == "movsxd" || recent[load_at + 1..add_at].iter().any(|(m, _, _)| m == "cdqe");
+            let mem = inside(&load_op)?;
+            let disp = if mem.contains(" - ") { 0 } else { mem.split('+').map(str::trim).find_map(parse_num).unwrap_or(0) };
+            let base_reg64 = |r: &str| r.trim_start_matches('e').to_string();
+            let base = match recent.iter().rev().find(|(m, o, _)| m == "lea" && base_reg64(o.split(',').next().unwrap_or("")) == base_reg64(&base_reg) && o.contains("[rip")) {
+                Some(lea) => rip_relative(&lea.1, lea.2)?,
+                None => *leas.get(&base_reg).or_else(|| leas.get(&base_reg64(&base_reg)))?,
+            };
+            let table = base + disp;
+            for i in 0..count {
+                let e = read(table + i * 4, 4)?;
+                let t = if signed { (base as i64 + i64::from(e as u32 as i32)) as u64 } else { base + e };
+                targets.push(t);
+            }
+        } else {
+            return None;
+        }
+        let ok = targets.iter().all(|&t| self.is_code(t) && t.abs_diff(jmp_addr) < 0x10_0000);
+        ok.then_some(targets)
+    }
 
     /// Se a "função" só salta para um slot de import (PLT, thunk da IAT), devolve o nome.
     fn stub_target(&self, cs: &Capstone, cpu: CpuArch, f: &Func) -> Option<String> {
@@ -575,7 +783,7 @@ impl NativeEngine {
             let code = self.bytes_at(addr, len as usize)?;
             let dis = cs.disasm_count(code, addr, 1).ok()?;
             let ins = dis.iter().next()?;
-            if ins.mnemonic() != Some("jmp") {
+            if strip_prefixes(ins.mnemonic().unwrap_or("")) != "jmp" {
                 continue;
             }
             let op = ins.op_str().unwrap_or("");
@@ -700,8 +908,9 @@ impl NativeEngine {
         }
         if cpu == CpuArch::X64 {
             if let Some(ea) = rip_relative(op, addr + u64::from(len)) {
-                if let Some(n) = self.extern_names.get(&ea) {
-                    return Some(n.clone());
+                // Função antes de string: bytes de código às vezes parecem texto ("UWVSH").
+                if let Some(n) = self.name_of(ea) {
+                    return Some(n);
                 }
                 if let Some(s) = self.string_at.get(&ea) {
                     return Some(format!("\"{}\"", truncate(s, 60)));
@@ -711,6 +920,9 @@ impl NativeEngine {
         // Endereço absoluto que aponta para uma string (comum em x86 32 bits e ARM).
         for tok in op.split([',', '[', ']', ' ']) {
             if let Some(v) = parse_num(tok) {
+                if let Some(&i) = self.by_addr.get(&v) {
+                    return Some(self.funcs[i].name.clone());
+                }
                 if let Some(s) = self.string_at.get(&v) {
                     return Some(format!("\"{}\"", truncate(s, 60)));
                 }
@@ -781,7 +993,18 @@ impl NativeEngine {
             .collect()
     }
 
+    fn abi(&self) -> Abi {
+        match self.cpu {
+            Some(CpuArch::X64) if self.pe => Abi::Win64,
+            Some(CpuArch::X64) => Abi::SysV64,
+            _ => Abi::X86,
+        }
+    }
+
     fn pseudo_lines(&self, f: &Func) -> Vec<CodeLine> {
+        if let Some(lines) = decompile::decompile(self, f, self.abi()) {
+            return lines;
+        }
         let cpu = self.cpu.unwrap_or(CpuArch::X64);
         let decoded = self.decode(f);
         let mut out = Vec::with_capacity(decoded.len() + 4);
@@ -945,8 +1168,21 @@ fn imm_target(op: &str) -> Option<u64> {
     t.strip_prefix("0x").and_then(|h| u64::from_str_radix(h, 16).ok())
 }
 
+/// Tira prefixos que não mudam o fluxo (`notrack jmp`, `bnd ret`, `repz ret`).
+fn strip_prefixes(mn: &str) -> &str {
+    let mut m = mn;
+    for p in ["notrack ", "bnd ", "repz ", "rep "] {
+        if let Some(r) = m.strip_prefix(p) {
+            if r.starts_with('j') || r.starts_with("ret") || r.starts_with("call") {
+                m = r;
+            }
+        }
+    }
+    m
+}
+
 fn classify(cpu: CpuArch, mn: &str, op: &str) -> Flow {
-    let m = mn.to_ascii_lowercase();
+    let m = strip_prefixes(mn).to_ascii_lowercase();
     let target = imm_target(op);
     match cpu {
         CpuArch::X86 | CpuArch::X64 => match m.as_str() {
@@ -1171,7 +1407,7 @@ mod tests {
         assert!(!dis.is_empty());
         assert!(dis.iter().all(|l| l.bytes.as_deref().is_some_and(|b| !b.is_empty())));
         let pseudo = e.lines(addr, CodeKind::Pseudo).unwrap();
-        assert!(pseudo.len() >= dis.len());
+        assert!(pseudo.iter().any(|l| l.text.contains(&format!("{}(", entry.name))), "pseudocódigo sem assinatura");
         assert!(!e.list_strings().is_empty());
     }
 

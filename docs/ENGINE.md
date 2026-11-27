@@ -80,8 +80,42 @@ Erros voltam como string em português.
    e referências a código (`lea`/`mov` de endereços executáveis) como novas sementes.
 4. Em x86, preenche lacunas entre funções (código só alcançado por ponteiro), pulando o preenchimento.
 5. Reconhece stubs de import (`jmp [slot]` em PLT/IAT) e os trata como nomes, não funções.
-6. Monta xrefs a partir das chamadas. Disassembly, pseudocódigo e hex de cada função são gerados sob demanda
+6. Segue tabelas de `switch` (`cmp idx, N; ja` + `jmp [tabela + idx*S]` ou carga relativa `movsxd`/`mov`+`cdqe`
+   seguida de `add r, base; jmp r`) e trata `jmp` logo após o epílogo (`pop`/`leave`/`add rsp`) para fora da
+   função como chamada de cauda.
+7. PE sem símbolos: a função que referencia `DefWindowProc*` vira `WndProc`; a que referencia `RegisterClass*` e
+   `GetMessage*` vira `WinMain`. Com tabela COFF (MinGW sem `-s`), usa os nomes reais.
+8. Monta xrefs a partir das chamadas. Disassembly, pseudocódigo e hex de cada função são gerados sob demanda
    e guardados (`OnceLock`).
+
+### Decompilador (x86 / x86-64)
+
+`crates/hellius-core/src/engine/native/decompile.rs`, com o conhecimento de APIs em `winapi.rs`.
+
+1. **Decodificação** com operandos estruturados (capstone em modo detalhe).
+2. **CFG**: blocos a partir dos inícios conhecidos, saltos, tabelas de `switch` e chamadas que não retornam
+   (`exit`, `ExitProcess`, `__stack_chk_fail`...).
+3. **Execução simbólica por bloco**: cada registrador guarda uma expressão. Pilha vira variáveis pelo deslocamento
+   em relação ao `rsp` de entrada (`param_N`, `local_XX`, "home space" do Win64). Escritas via `rsp` ficam
+   pendentes até a chamada seguinte (argumentos de pilha); via `rbp`, são locais.
+4. **Chamadas**: número de argumentos pela assinatura conhecida (Win32/libc), pelos registradores que a função
+   chamada lê antes de escrever, ou pelos registradores escritos antes da chamada. Registradores voláteis são
+   descartados depois; o retorno vira `Res(endereço)`. stdcall 32 bits desempilha os argumentos.
+5. **Fluxo de dados** em ponto fixo: valores que chegam diferentes a um bloco viram variáveis de junção; cada aresta
+   recebe as cópias, ordenadas como cópia paralela (ciclo → temporário).
+6. **Estruturação**: dominadores e pós-dominadores (Cooper-Harvey-Kennedy), laços naturais, `if/else` com ponto de
+   junção no pós-dominador, `switch` por cadeia de comparações (3+ valores) ou tabela, blocos pequenos de retorno
+   duplicados em vez de `goto`. O que sobra vira `goto LAB_...`.
+7. **Limpeza**: chamada usada uma vez entra na expressão seguinte; `while(true){if(c)break;...}` → `while`;
+   `do/while`; `for`; retorno antecipado; `return` comum sai do `if`; vivacidade remove cópias mortas; zeragem de
+   struct vira `memset`; canário de pilha some.
+8. **Impressão**: assinatura conhecida (`WndProc`, `WinMain`, `main`), structs Win32 na pilha (`WNDCLASS`, `MSG`,
+   `PAINTSTRUCT`, `RECT`), constantes por grupo (`WM_*`, `MB_*`, `WS_*`/`BS_*`, `MF_*`, `SW_*`, `IDC_*`,
+   `CW_USEDEFAULT`, `COLOR_*`), `LOWORD`, índice de array, `x++`/`x += k`.
+
+Testes: `cargo test -p hellius-core` usa executáveis de `crates/hellius-core/tests/fixtures/` (fontes ao lado)
+e confere linhas exatas do resultado. A ferramenta `probe` tem `PROBE_PSEUDO=1` (só o pseudocódigo) e
+`PROBE_ALL=1` (decompila tudo: pânicos, tempo, `goto`, `__asm`).
 
 `get_totals(kind)` devolve o total de linhas de todas as funções numa chamada (escopo "programa inteiro").
 `engine_info` informa `partial` (parou num limite) e `hasCode` (há disassembler para a arquitetura).
